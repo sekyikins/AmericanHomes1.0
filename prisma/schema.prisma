@@ -1,0 +1,944 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ============================================================================
+// 1. IDENTITY & ACCESS
+// ============================================================================
+
+model User {
+  id           String           @id @default(cuid())
+  phone        String           @unique
+  email        String?          @unique
+  name         String?
+  passwordHash   String?
+  mfaSecret      String?
+  mfaEnabled     Boolean          @default(false)
+  sessionVersion Int              @default(1)
+  lastLoginAt    DateTime?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  customer     CustomerProfile?
+  staff        StaffProfile?
+  auditEvents  AuditEvent[]
+}
+
+model CustomerProfile {
+  id                     String                  @id @default(cuid())
+  userId                 String                  @unique
+  user                   User                    @relation(fields: [userId], references: [id])
+  whatsappConsent        Boolean                 @default(false)
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  requests               ProductRequest[]
+  reservations           Reservation[]
+  orders                 SalesOrder[]
+  consentEvents          ConsentEvent[]
+  notificationPreference NotificationPreference?
+  storeCredits           StoreCreditEntry[]
+  pollVotes              PollVote[]
+
+  @@index([userId])
+}
+
+model StaffProfile {
+  id                 String                 @id @default(cuid())
+  userId             String                 @unique
+  user               User                   @relation(fields: [userId], references: [id])
+  jobTitle           String?
+  isOwner            Boolean                @default(false)
+  isActive           Boolean                @default(true)
+  restrictFinancials Boolean                @default(false)
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+  groupAssignments   StaffGroupAssignment[]
+
+  @@index([userId])
+}
+
+model PermissionGroup {
+  id          String                 @id @default(cuid())
+  name        String                 @unique
+  description String?
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+  members     StaffGroupAssignment[]
+  permissions GroupPermission[]
+}
+
+model Permission {
+  id          String            @id @default(cuid())
+  code        String            @unique
+  description String?
+  groups      GroupPermission[]
+}
+
+model GroupPermission {
+  id           String          @id @default(cuid())
+  groupId      String
+  permissionId String
+  group        PermissionGroup @relation(fields: [groupId], references: [id])
+  permission   Permission      @relation(fields: [permissionId], references: [id])
+
+  @@unique([groupId, permissionId])
+}
+
+model StaffGroupAssignment {
+  id        String          @id @default(cuid())
+  staffId   String
+  groupId   String
+  createdAt DateTime        @default(now())
+  staff     StaffProfile    @relation(fields: [staffId], references: [id])
+  group     PermissionGroup @relation(fields: [groupId], references: [id])
+
+  @@unique([staffId, groupId])
+}
+
+// ============================================================================
+// 2. SHIPMENTS
+// ============================================================================
+
+model Shipment {
+  id                String                  @id @default(cuid())
+  reference         String                  @unique
+  providerName      String
+  providerContact   String?
+  status            String                  @default("PLANNED") // PLANNED, IN_TRANSIT, ARRIVED, RECEIVING, RECONCILIATION_PENDING, CLOSED
+  departureDate     DateTime?
+  estimatedArrival  DateTime?
+  actualArrival     DateTime?
+  trackingRef       String?
+  notes             String?
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+  manifestRevisions ManifestRevision[]
+  trackingEvents    ShipmentTrackingEvent[]
+  receivingSessions ReceivingSession[]
+  expenses          ShipmentExpense[]
+  sourcingItems     ShipmentSourcingItem[]
+}
+
+model ManifestRevision {
+  id         String         @id @default(cuid())
+  shipmentId String
+  revision   Int
+  notes      String?
+  createdAt  DateTime       @default(now())
+  shipment   Shipment       @relation(fields: [shipmentId], references: [id])
+  items      ManifestItem[]
+
+  @@unique([shipmentId, revision])
+  @@index([shipmentId])
+}
+
+model ManifestItem {
+  id            String           @id @default(cuid())
+  revisionId    String
+  variantId     String?
+  productName   String
+  quantity      Int
+  unitCostCents Int
+  notes         String?
+  revision      ManifestRevision @relation(fields: [revisionId], references: [id])
+  variant       ProductVariant?  @relation(fields: [variantId], references: [id])
+  receiptLines  ReceiptLine[]
+
+  @@index([revisionId])
+  @@index([variantId])
+}
+
+model ShipmentTrackingEvent {
+  id         String   @id @default(cuid())
+  shipmentId String
+  event      String
+  location   String?
+  occurredAt DateTime
+  notes      String?
+  shipment   Shipment @relation(fields: [shipmentId], references: [id])
+
+  @@index([shipmentId])
+}
+
+model ShipmentExpense {
+  id          String   @id @default(cuid())
+  shipmentId  String
+  category    String   @default("OTHER")
+  description String
+  amountCents Int
+  currency    String   @default("GHS")
+  recordedBy  String?
+  date        DateTime @default(now())
+  createdAt   DateTime @default(now())
+  shipment    Shipment @relation(fields: [shipmentId], references: [id])
+
+  @@index([shipmentId])
+}
+
+// ============================================================================
+// 3. RECEIVING & RECONCILIATION
+// ============================================================================
+
+model ReceivingSession {
+  id         String        @id @default(cuid())
+  shipmentId String
+  staffId    String
+  status     String        @default("OPEN") // OPEN, CLOSED
+  openedAt   DateTime      @default(now())
+  closedAt   DateTime?
+  notes      String?
+  shipment   Shipment      @relation(fields: [shipmentId], references: [id])
+  lines      ReceiptLine[]
+
+  @@index([shipmentId])
+}
+
+model ReceiptLine {
+  id             String           @id @default(cuid())
+  sessionId      String
+  manifestItemId String?
+  expectedQty    Int?
+  receivedQty    Int
+  condition      String           @default("GOOD") // GOOD, DAMAGED, INCOMPLETE
+  notes          String?
+  createdAt      DateTime         @default(now())
+  session        ReceivingSession @relation(fields: [sessionId], references: [id])
+  manifestItem   ManifestItem?    @relation(fields: [manifestItemId], references: [id])
+  discrepancies  Discrepancy[]
+  stockLots      StockLot[]
+
+  @@index([sessionId])
+}
+
+model Discrepancy {
+  id         String                 @id @default(cuid())
+  lineId     String
+  type       String                 // MISSING, DAMAGED, UNEXPECTED
+  quantity   Int
+  notes      String?
+  createdAt  DateTime               @default(now())
+  line       ReceiptLine            @relation(fields: [lineId], references: [id])
+  resolution DiscrepancyResolution?
+
+  @@index([lineId])
+}
+
+model DiscrepancyResolution {
+  id            String      @id @default(cuid())
+  discrepancyId String      @unique
+  resolution    String
+  resolvedBy    String
+  resolvedAt    DateTime    @default(now())
+  notes         String?
+  discrepancy   Discrepancy @relation(fields: [discrepancyId], references: [id])
+}
+
+// ============================================================================
+// 4. CATALOGUE & PRODUCT OPERATIONS
+// ============================================================================
+
+model Product {
+  id                String                     @id @default(cuid())
+  name              String
+  brand             String?
+  model             String?
+  description       String?
+  specifications    String?
+  category          String
+  condition         String                     @default("GOOD") // NEW, GOOD, FAIR, POOR, DEFECTIVE
+  disposition       String                     @default("NORMAL_SALE") // NORMAL_SALE, DISCOUNTED_SALE, HELD_FOR_REVIEW, NOT_FOR_SALE
+  defectDisclosures String?
+  shipmentId        String?
+  isPublished       Boolean                    @default(false)
+  unpublishReason   String?
+  unpublishedBy     String?
+  unpublishedAt     DateTime?
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @updatedAt
+  variants          ProductVariant[]
+  media             ProductMedia[]
+  preparationSteps  ProductPreparationRecord[]
+}
+
+model ProductPreparationRecord {
+  id          String    @id @default(cuid())
+  productId   String
+  step        String    // INSPECTION, CLEANING, PHOTOGRAPHY, WRAPPING, PRICING, FINAL_REVIEW
+  status      String    @default("PENDING") // PENDING, COMPLETED
+  completedBy String?
+  completedAt DateTime?
+  notes       String?
+  product     Product   @relation(fields: [productId], references: [id])
+
+  @@unique([productId, step])
+  @@index([productId])
+}
+
+model ProductVariant {
+  id           String                    @id @default(cuid())
+  productId    String
+  sku          String                    @unique
+  name         String?
+  priceCents   Int
+  isPublished  Boolean                   @default(false)
+  createdAt    DateTime                  @default(now())
+  updatedAt    DateTime                  @updatedAt
+  product      Product                   @relation(fields: [productId], references: [id])
+  attributes   ProductVariantAttribute[]
+  stockLots    StockLot[]
+  holdLines    StockHoldLine[]
+  requests     ProductRequest[]
+  reservations  Reservation[]
+  orderLines    OrderLine[]
+  manifestItems ManifestItem[]
+
+  @@index([productId])
+}
+
+model ProductAttribute {
+  id       String                    @id @default(cuid())
+  name     String                    @unique
+  variants ProductVariantAttribute[]
+}
+
+model ProductVariantAttribute {
+  id          String           @id @default(cuid())
+  variantId   String
+  attributeId String
+  value       String
+  variant     ProductVariant   @relation(fields: [variantId], references: [id])
+  attribute   ProductAttribute @relation(fields: [attributeId], references: [id])
+
+  @@unique([variantId, attributeId])
+}
+
+model ProductMedia {
+  id        String   @id @default(cuid())
+  productId String
+  url       String
+  type      String   @default("IMAGE")
+  position  Int      @default(0)
+  createdAt DateTime @default(now())
+  product   Product  @relation(fields: [productId], references: [id])
+
+  @@index([productId])
+}
+
+model PricingApproval {
+  id                 String    @id @default(cuid())
+  variantId          String
+  previousPriceCents Int?
+  proposedPriceCents Int
+  reason             String?
+  comparableRef      String?
+  status             String    @default("PENDING") // PENDING, APPROVED, REJECTED
+  initiatedBy        String
+  approvedBy         String?
+  notes              String?
+  createdAt          DateTime  @default(now())
+  resolvedAt         DateTime?
+
+  @@index([variantId])
+}
+
+// ============================================================================
+// 5. INVENTORY LEDGER & STOCKTAKES
+// ============================================================================
+// All stock mutations MUST go through InventoryService.
+
+model StockLot {
+  id            String              @id @default(cuid())
+  variantId     String
+  receiptLineId String?
+  quantity      Int
+  available     Int
+  held          Int                 @default(0)
+  unavailable   Int                 @default(0)
+  condition     String              @default("GOOD")
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  variant       ProductVariant      @relation(fields: [variantId], references: [id])
+  receiptLine   ReceiptLine?        @relation(fields: [receiptLineId], references: [id])
+  movements     InventoryMovement[]
+  holdLines     StockHoldLine[]
+  trackedUnits  TrackedUnit[]
+
+  @@index([variantId])
+}
+
+model TrackedUnit {
+  id          String    @id @default(cuid())
+  variantId   String
+  lotId       String?
+  unitCode    String    @unique
+  status      String    @default("UNAVAILABLE") // UNAVAILABLE, AVAILABLE, HELD, SOLD, DISPOSED
+  condition   String    @default("GOOD")
+  defectNotes String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  lot         StockLot? @relation(fields: [lotId], references: [id])
+
+  @@index([variantId])
+}
+
+model InventoryMovement {
+  id            String   @id @default(cuid())
+  lotId         String
+  quantity      Int // positive = in, negative = out
+  reason        String
+  referenceType String?
+  referenceId   String?
+  actorId       String?
+  createdAt     DateTime @default(now())
+  lot           StockLot @relation(fields: [lotId], references: [id])
+
+  @@index([lotId])
+}
+
+model StockHold {
+  id            String          @id @default(cuid())
+  reason        String
+  referenceType String
+  referenceId   String
+  status        String          @default("ACTIVE") // ACTIVE, RELEASED, EXPIRED
+  createdAt     DateTime        @default(now())
+  expiresAt     DateTime?
+  releasedAt    DateTime?
+  lines         StockHoldLine[]
+}
+
+model StockHoldLine {
+  id        String         @id @default(cuid())
+  holdId    String
+  lotId     String
+  variantId String
+  quantity  Int
+  hold      StockHold      @relation(fields: [holdId], references: [id])
+  lot       StockLot       @relation(fields: [lotId], references: [id])
+  variant   ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@index([holdId])
+  @@index([lotId])
+}
+
+model Stocktake {
+  id          String          @id @default(cuid())
+  reference   String          @unique
+  status      String          @default("OPEN") // OPEN, SUBMITTED, CLOSED
+  startedAt   DateTime        @default(now())
+  closedAt    DateTime?
+  submittedBy String?
+  lines       StocktakeLine[]
+}
+
+model StocktakeLine {
+  id          String    @id @default(cuid())
+  stocktakeId String
+  variantId   String
+  countedQty  Int
+  systemQty   Int
+  difference  Int
+  notes       String?
+  stocktake   Stocktake @relation(fields: [stocktakeId], references: [id])
+
+  @@index([stocktakeId])
+}
+
+model AdjustmentProposal {
+  id              String    @id @default(cuid())
+  stocktakeId     String?
+  variantId       String
+  previousQty     Int       @default(0)
+  quantity        Int
+  proposedQty     Int       @default(0)
+  reason          String
+  status          String    @default("PENDING") // PENDING, APPROVED, REJECTED
+  initiatedBy     String
+  approvedBy      String?
+  rejectionReason String?
+  createdAt       DateTime  @default(now())
+  resolvedAt      DateTime?
+}
+
+// ============================================================================
+// 6. PRODUCT REQUESTS, SOURCING & ALLOCATIONS
+// ============================================================================
+
+model ProductRequest {
+  id               String                   @id @default(cuid())
+  customerId       String
+  variantId        String?
+  productName      String?
+  category         String?
+  description      String
+  quantity         Int                      @default(1)
+  budgetCents      Int?
+  imageUrl         String?
+  referenceUrl     String?
+  priority         Int                      @default(0)
+  status           String                   @default("SUBMITTED") // SUBMITTED, UNDER_REVIEW, APPROVED_FOR_SOURCING, SOURCING, PROVIDER_CONFIRMED, RECEIVED, ALLOCATED, FULFILLED, DECLINED, WITHDRAWN, WITHDRAWAL_REQUESTED
+  notes            String?
+  withdrawnAt      DateTime?
+  withdrawalReason String?
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+  customer         CustomerProfile          @relation(fields: [customerId], references: [id])
+  variant          ProductVariant?          @relation(fields: [variantId], references: [id])
+  groups           RequestGroupMembership[]
+  offers           AllocationOffer[]
+
+  @@index([customerId])
+}
+
+model RequestGroup {
+  id            String                   @id @default(cuid())
+  name          String?
+  createdAt     DateTime                 @default(now())
+  members       RequestGroupMembership[]
+  sourcingItems ShipmentSourcingItem[]
+}
+
+model RequestGroupMembership {
+  id        String         @id @default(cuid())
+  requestId String
+  groupId   String
+  request   ProductRequest @relation(fields: [requestId], references: [id])
+  group     RequestGroup   @relation(fields: [groupId], references: [id])
+
+  @@unique([requestId, groupId])
+}
+
+model ShipmentSourcingItem {
+  id                  String        @id @default(cuid())
+  shipmentId          String
+  groupId             String?
+  description         String
+  quantity            Int
+  status              String        @default("PENDING") // PENDING, CONFIRMED, RECEIVED, CANCELLED
+  providerRef         String?
+  confirmedAt         DateTime?
+  providerConfirmedAt DateTime?
+  shipment            Shipment      @relation(fields: [shipmentId], references: [id])
+  group               RequestGroup? @relation(fields: [groupId], references: [id])
+
+  @@index([shipmentId])
+}
+
+model AllocationOffer {
+  id          String         @id @default(cuid())
+  requestId   String
+  variantId   String?
+  lotId       String?
+  quantity    Int            @default(1)
+  status      String         @default("PENDING") // PENDING, ACCEPTED, DECLINED, EXPIRED
+  expiresAt   DateTime?
+  respondedAt DateTime?
+  notes       String?
+  createdAt   DateTime       @default(now())
+  request     ProductRequest @relation(fields: [requestId], references: [id])
+
+  @@index([requestId])
+}
+
+model ProductPoll {
+  id          String     @id @default(cuid())
+  title       String
+  description String?
+  status      String     @default("DRAFT") // DRAFT, OPEN, CLOSED
+  closesAt    DateTime?
+  createdBy   String
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  votes       PollVote[]
+}
+
+model PollVote {
+  id         String          @id @default(cuid())
+  pollId     String
+  customerId String
+  choice     String          @default("YES")
+  createdAt  DateTime        @default(now())
+  poll       ProductPoll     @relation(fields: [pollId], references: [id])
+  customer   CustomerProfile @relation(fields: [customerId], references: [id])
+
+  @@unique([pollId, customerId])
+}
+
+// ============================================================================
+// 7. RESERVATIONS & CHECKOUT
+// ============================================================================
+
+model Reservation {
+  id         String          @id @default(cuid())
+  customerId String
+  variantId  String
+  quantity   Int
+  source     String          @default("ONLINE") // ONLINE, WALK_IN
+  status     String          @default("PENDING") // PENDING, APPROVED, ACTIVE, EXPIRED, CANCELLED, FULFILLED
+  expiresAt  DateTime?
+  approvedBy String?
+  approvedAt DateTime?
+  notes      String?
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+  customer   CustomerProfile @relation(fields: [customerId], references: [id])
+  variant    ProductVariant  @relation(fields: [variantId], references: [id])
+
+  @@index([customerId])
+  @@index([variantId])
+}
+
+// ============================================================================
+// 8. SALES & ORDERS
+// ============================================================================
+
+model CheckoutSession {
+  id         String   @id @default(cuid())
+  customerId String?
+  holdId     String?
+  orderId    String?
+  status     String   @default("ACTIVE") // ACTIVE, COMPLETED, EXPIRED, CANCELLED
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model SalesOrder {
+  id                          String           @id @default(cuid())
+  customerId                  String?
+  reference                   String           @unique @default(cuid())
+  source                      String           @default("ONLINE") // ONLINE, WALK_IN
+  status                      String           @default("PLACED") // Legacy alias kept synced
+  orderStatus                 String           @default("PLACED") // DRAFT, PLACED, CONFIRMED, CANCELLED, CLOSED
+  paymentStatus               String           @default("PENDING") // PENDING, PARTIALLY_PAID, PAID, FAILED, REVERSED, PARTIALLY_REFUNDED, REFUNDED
+  fulfilmentStatus            String           @default("NOT_STARTED") // NOT_STARTED, PREPARING, READY_FOR_COLLECTION, PARTIALLY_COLLECTED, COLLECTED
+  disclosedDefectsAcknowledged Boolean         @default(false)
+  totalCents                  Int
+  notes                       String?
+  createdAt                   DateTime         @default(now())
+  updatedAt                   DateTime         @updatedAt
+  customer                    CustomerProfile? @relation(fields: [customerId], references: [id])
+  lines                       OrderLine[]
+  payments                    Payment[]
+  returns                     ReturnRequest[]
+
+  @@index([customerId])
+}
+
+model OrderLine {
+  id             String           @id @default(cuid())
+  orderId        String
+  variantId      String
+  quantity       Int
+  unitPriceCents Int
+  discountCents  Int              @default(0)
+  notes          String?
+  order          SalesOrder       @relation(fields: [orderId], references: [id])
+  variant        ProductVariant   @relation(fields: [variantId], references: [id])
+  collections    CollectionLine[]
+
+  @@index([orderId])
+}
+
+// ============================================================================
+// 9. PAYMENTS & FINANCE
+// ============================================================================
+
+model Payment {
+  id              String           @id @default(cuid())
+  orderId         String
+  amountCents     Int
+  method          String // PAYSTACK_CARD, PAYSTACK_MOBILE_MONEY, BANK_TRANSFER, CASH, MANUAL
+  status          String           @default("PENDING") // PENDING, PARTIAL, VERIFIED, FAILED, REFUNDED, EXCEPTION
+  reference       String?          @unique
+  payerName       String?
+  payerPhone      String?
+  evidenceUrl     String?
+  recordedBy      String?
+  approvedBy      String?
+  isException     Boolean          @default(false)
+  exceptionReason String?
+  verifiedAt      DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  order           SalesOrder       @relation(fields: [orderId], references: [id])
+  attempts        PaymentAttempt[]
+  refunds         Refund[]
+
+  @@index([orderId])
+}
+
+model PaymentAttempt {
+  id            String   @id @default(cuid())
+  paymentId     String
+  amountCents   Int
+  status        String
+  providerRef   String?
+  failureReason String?
+  attemptedAt   DateTime @default(now())
+  payment       Payment  @relation(fields: [paymentId], references: [id])
+
+  @@index([paymentId])
+}
+
+model Refund {
+  id          String    @id @default(cuid())
+  paymentId   String
+  amountCents Int
+  reason      String
+  status      String    @default("PENDING") // PENDING, APPROVED, PROCESSED, FAILED
+  processedAt DateTime?
+  createdAt   DateTime  @default(now())
+  payment     Payment   @relation(fields: [paymentId], references: [id])
+
+  @@index([paymentId])
+}
+
+model GeneralExpense {
+  id          String   @id @default(cuid())
+  description String
+  amountCents Int
+  category    String
+  recordedBy  String
+  date        DateTime
+  createdAt   DateTime @default(now())
+}
+
+// ============================================================================
+// 10. COLLECTIONS & RETURNS
+// ============================================================================
+
+model CollectionRecord {
+  id                         String           @id @default(cuid())
+  orderId                    String?
+  collectedBy                String?
+  representativeName         String?
+  representativePhone        String?
+  representativeOtpVerified  Boolean          @default(false)
+  approvedBy                 String?
+  unpaidExceptionApprovedBy  String?
+  status                     String           @default("PENDING") // PENDING, PARTIAL, COMPLETED
+  collectedAt                DateTime?
+  notes                      String?
+  createdAt                  DateTime         @default(now())
+  lines                      CollectionLine[]
+}
+
+model CollectionLine {
+  id           String           @id @default(cuid())
+  collectionId String
+  orderLineId  String
+  quantity     Int
+  collection   CollectionRecord @relation(fields: [collectionId], references: [id])
+  orderLine    OrderLine        @relation(fields: [orderLineId], references: [id])
+
+  @@index([collectionId])
+}
+
+model ReturnRequest {
+  id                String       @id @default(cuid())
+  orderId           String
+  customerId        String?
+  status            String       @default("PENDING") // PENDING, APPROVED, REJECTED, COMPLETED
+  reason            String
+  notes             String?
+  firstCollectedAt  DateTime?
+  withinSevenDays   Boolean      @default(true)
+  isDisclosedDefect Boolean      @default(false)
+  settlementType    String?      // REFUND, EXCHANGE, STORE_CREDIT
+  refundAmountCents Int?
+  exchangeVariantId String?
+  priceDiffCents    Int?
+  reviewedBy        String?
+  reviewedAt        DateTime?
+  approvedBy        String?
+  approvedAt        DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  order             SalesOrder   @relation(fields: [orderId], references: [id])
+  lines             ReturnLine[]
+
+  @@index([orderId])
+}
+
+model StoreCreditEntry {
+  id              String          @id @default(cuid())
+  customerId      String
+  returnRequestId String?
+  amountCents     Int
+  remainingCents  Int
+  status          String          @default("ACTIVE") // ACTIVE, PARTIALLY_REDEEMED, REDEEMED
+  issuedBy        String
+  notes           String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  customer        CustomerProfile @relation(fields: [customerId], references: [id])
+
+  @@index([customerId])
+}
+
+model ReturnLine {
+  id          String        @id @default(cuid())
+  returnId    String
+  variantId   String
+  quantity    Int
+  disposition String? // RESTOCK, DISPOSE, EXCHANGE
+  return      ReturnRequest @relation(fields: [returnId], references: [id])
+
+  @@index([returnId])
+}
+
+// ============================================================================
+// 11. NOTIFICATIONS & TRANSACTIONAL OUTBOX
+// ============================================================================
+
+model NotificationMessage {
+  id          String   @id @default(cuid())
+  userId      String
+  title       String
+  body        String
+  type        String
+  referenceId String?
+  isRead      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+}
+
+model OutboxEvent {
+  id          String    @id @default(cuid())
+  eventType   String
+  payload     Json
+  status      String    @default("PENDING") // PENDING, DELIVERED, FAILED
+  attempts    Int       @default(0)
+  lastError   String?
+  createdAt   DateTime  @default(now())
+  processedAt DateTime?
+}
+
+// ============================================================================
+// 12. REPORTING, EXPORTS, AUDIT & INCIDENTS
+// ============================================================================
+
+model ExportJob {
+  id          String    @id @default(cuid())
+  type        String
+  status      String    @default("PENDING") // PENDING, COMPLETED, FAILED
+  requestedBy String
+  fileUrl     String?
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+}
+
+// Audit events are append-only. Never update or delete.
+model AuditEvent {
+  id         String   @id @default(cuid())
+  actorId    String?
+  action     String
+  entityType String
+  entityId   String?
+  before     Json?
+  after      Json?
+  approverId String?
+  requestRef String?
+  createdAt  DateTime @default(now())
+  actor      User?    @relation(fields: [actorId], references: [id])
+
+  @@index([actorId])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+model OperationalIncident {
+  id         String    @id @default(cuid())
+  title      String
+  severity   String?
+  status     String    @default("OPEN") // OPEN, IN_PROGRESS, RESOLVED
+  assignedTo String?
+  notes      String?
+  resolvedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+}
+
+model ConsentEvent {
+  id         String          @id @default(cuid())
+  customerId String
+  channel    String          // WHATSAPP, PROMOTIONAL
+  status     String          // GRANTED, WITHDRAWN
+  source     String?
+  createdAt  DateTime        @default(now())
+  customer   CustomerProfile @relation(fields: [customerId], references: [id])
+
+  @@index([customerId])
+}
+
+model NotificationPreference {
+  id              String          @id @default(cuid())
+  customerId      String          @unique
+  productRequests Boolean         @default(true)
+  reservations    Boolean         @default(true)
+  ordersPayments  Boolean         @default(true)
+  availability    Boolean         @default(true)
+  promotions      Boolean         @default(false)
+  updatedAt       DateTime        @updatedAt
+  customer        CustomerProfile @relation(fields: [customerId], references: [id])
+}
+
+model NotificationDeliveryAttempt {
+  id             String   @id @default(cuid())
+  notificationId String?
+  channel        String   // IN_APP, WHATSAPP
+  recipient      String
+  status         String   @default("PENDING") // PENDING, SENT, DELIVERED, FAILED
+  providerRef    String?
+  errorMessage   String?
+  attemptCount   Int      @default(1)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model Announcement {
+  id          String    @id @default(cuid())
+  title       String
+  body        String
+  status      String    @default("DRAFT") // DRAFT, PUBLISHED, UNPUBLISHED
+  publishedBy String?
+  publishedAt DateTime?
+  createdBy   String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model SystemSetting {
+  key         String   @id
+  value       String
+  description String?
+  updatedBy   String?
+  updatedAt   DateTime @updatedAt
+}
+
+model StaffReport {
+  id               String    @id @default(cuid())
+  title            String
+  category         String    @default("GENERAL") // GENERAL, OPERATIONS, SAFETY, HR, SYSTEM, PROFILE_CHANGE
+  description      String
+  requestedChanges Json?
+  isAnonymous      Boolean   @default(false)
+  reporterId       String?
+  reporterName     String?
+  status           String    @default("SUBMITTED") // SUBMITTED, ADDRESSED, DECLINED
+  resolution       String?
+  reviewedBy       String?
+  reviewedAt       DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
+}

@@ -1,0 +1,452 @@
+'use client';
+
+import {
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  Clock,
+  Minus,
+  Plus,
+  RotateCcw,
+  ShieldCheck,
+  ShoppingBag,
+  Star,
+  Warehouse,
+  X,
+} from 'lucide-react';
+import Link from 'next/link';
+import { useEffect, useState, type FormEvent } from 'react';
+import { EmptyState, ProductDetailSkeleton } from '@/components/ui';
+import { catalogueApi, reservationsApi } from '@/lib/api';
+import {
+  mapApiProductToCatalog,
+  type CatalogProduct,
+} from '@/lib/data/products';
+import { formatGHS } from '@/lib/formatting/currency';
+import { useAuth } from '@/store/auth.store';
+import { useCart } from '@/store/cart.store';
+
+export default function ProductDetailPage({ params }: { params: { productId: string } }) {
+  const [product, setProduct] = useState<CatalogProduct | null>(null);
+  const [loadingProduct, setLoadingProduct] = useState(true);
+  const { addItem } = useCart();
+  const { user, setLoginOpen } = useAuth();
+
+  useEffect(() => {
+    let active = true;
+    catalogueApi
+      .getProduct(params.productId)
+      .then((res) => {
+        if (active && res && typeof res === 'object' && 'id' in res) {
+          setProduct(mapApiProductToCatalog(res as Record<string, unknown>));
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (active) setLoadingProduct(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [params.productId]);
+
+  const [selectedVariant, setSelectedVariant] = useState(0);
+  const [selectedThumb, setSelectedThumb] = useState(0);
+  const [qty, setQty] = useState(1);
+  const [justAdded, setJustAdded] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(true);
+  const [defectsOpen, setDefectsOpen] = useState(true);
+
+  const [reserveOpen, setReserveOpen] = useState(false);
+  const [reserveNotes, setReserveNotes] = useState('');
+  const [reservedRef, setReservedRef] = useState<string | null>(null);
+  const [reserveError, setReserveError] = useState<string | null>(null);
+
+  if (loadingProduct) {
+    return (
+      <main className="page-shell">
+        <Link href="/shop" className="pdp-back">
+          <ArrowLeft size={15} />
+          <span>Back to products</span>
+        </Link>
+        <ProductDetailSkeleton />
+      </main>
+    );
+  }
+
+  if (!product) {
+    return (
+      <main className="page-shell">
+        <Link href="/shop" className="pdp-back">
+          <ArrowLeft size={15} />
+          <span>Back to products</span>
+        </Link>
+        <EmptyState
+          title="Product not found"
+          description="This item may have been unpublished or is no longer available."
+          action={
+            <Link href="/shop" className="button primary">
+              Browse available products
+            </Link>
+          }
+        />
+      </main>
+    );
+  }
+
+  const activeVariant = product.variants[selectedVariant] ?? product.variants[0];
+  const unitPricePesewas = activeVariant?.pricePesewas ?? product.pricePesewas;
+  const totalPesewas = unitPricePesewas * qty;
+
+  const handleAddToBag = () => {
+    for (let i = 0; i < qty; i++) {
+      addItem({
+        id: activeVariant?.id ?? product.defaultVariantId ?? product.id,
+        name: product.name,
+        category: product.category,
+        variant: activeVariant?.name ?? 'Standard',
+        pricePesewas: unitPricePesewas,
+        image: product.image,
+        defectDisclosures: product.defectDisclosures ?? null,
+      });
+    }
+    setJustAdded(true);
+    setTimeout(() => setJustAdded(false), 1400);
+  };
+
+  const handleOpenReserve = () => {
+    if (!user) {
+      setLoginOpen(true);
+      return;
+    }
+    setReservedRef(null);
+    setReserveOpen(true);
+  };
+
+  const handleSubmitReserve = async (e: FormEvent) => {
+    e.preventDefault();
+    setReserveError(null);
+    try {
+      const created = (await reservationsApi.request({
+        productVariantId: activeVariant?.id ?? product.defaultVariantId ?? product.id,
+        quantity: qty,
+        notes: reserveNotes.trim() || undefined,
+      })) as { id?: string } | null;
+      setReservedRef(created?.id ?? 'SUBMITTED');
+    } catch (err) {
+      setReserveError(
+        err instanceof Error ? err.message : 'Unable to submit reservation. Please try again.',
+      );
+    }
+  };
+
+  return (
+    <main className="pdp-shell" data-node-id="1:8537">
+      <Link href="/shop" className="pdp-back">
+        <ArrowLeft size={15} />
+        <span>Back to products</span>
+      </Link>
+
+      <div className="pdp-grid">
+        <div className="pdp-gallery">
+          <div className="pdp-main-img-wrap">
+            <img src={product.image} alt={product.name} className="pdp-main-img" />
+            <span className="pdp-photo-tag">ACTUAL PRODUCT PHOTOGRAPHY</span>
+          </div>
+
+          <div className="pdp-thumbs">
+            {[0, 1, 2].map((idx) => (
+              <button
+                key={idx}
+                type="button"
+                onClick={() => setSelectedThumb(idx)}
+                className={`pdp-thumb ${selectedThumb === idx ? 'active' : ''}`}
+                aria-label={`View photo ${idx + 1}`}
+              >
+                <img src={product.image} alt="" />
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="pdp-info">
+          <div className="pdp-meta-row">
+            <span className="bag-stock-pill" style={{ marginTop: 0 }}>
+              ● Available now
+            </span>
+            <span className="pdp-sku">{product.sku}</span>
+          </div>
+
+          <h1 className="pdp-title">{product.name}</h1>
+
+          <div className="pdp-rating">
+            <span className="pdp-stars" aria-hidden="true">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Star key={i} size={14} fill="#d48723" color="#d48723" />
+              ))}
+            </span>
+            <span>
+              {product.rating} · {product.reviewCount} reviews
+            </span>
+          </div>
+
+          <div className="pdp-price">{formatGHS(product.pricePesewas)}</div>
+
+          <p className="pdp-desc">{product.description}</p>
+
+          <div className="pdp-variant-head">
+            <strong>Choose a variant</strong>
+            <span>{activeVariant?.name}</span>
+          </div>
+
+          <div className="pdp-variants">
+            {product.variants.map((variant, idx) => {
+              const active = idx === selectedVariant;
+              return (
+                <button
+                  key={variant.name}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setSelectedVariant(idx)}
+                  className={`pdp-variant-chip ${active ? 'active' : ''}`}
+                >
+                  <span
+                    className="pdp-swatch"
+                    style={{ backgroundColor: variant.swatch }}
+                    aria-hidden="true"
+                  />
+                  <span>{variant.name}</span>
+                  {active && <Check size={14} color="var(--green)" strokeWidth={2.5} />}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="pdp-stock-box">
+            <CheckCircle2 size={18} color="var(--green)" style={{ flexShrink: 0 }} />
+            <div>
+              <strong>{product.availableCount} units available</strong>
+              <span>Ready for collection from our Tema warehouse</span>
+            </div>
+          </div>
+
+          <div className="pdp-buy-row">
+            <div className="pdp-qty">
+              <button
+                type="button"
+                aria-label="Decrease quantity"
+                onClick={() => setQty((q) => Math.max(1, q - 1))}
+              >
+                <Minus size={14} />
+              </button>
+              <span>{qty}</span>
+              <button
+                type="button"
+                aria-label="Increase quantity"
+                onClick={() => setQty((q) => Math.min(product.availableCount, q + 1))}
+              >
+                <Plus size={14} />
+              </button>
+            </div>
+
+            <button
+              type="button"
+              className="button primary pdp-add-btn"
+              onClick={handleAddToBag}
+            >
+              {justAdded ? (
+                <>
+                  <Check size={16} strokeWidth={2.5} />
+                  <span>Added to bag</span>
+                </>
+              ) : (
+                <>
+                  <ShoppingBag size={16} />
+                  <span>Add to bag · {formatGHS(totalPesewas)}</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleOpenReserve}
+            className="pdp-reserve-link"
+            style={{ width: '100%', border: 0, background: 'transparent', padding: 0 }}
+          >
+            <Clock size={14} />
+            <span>Need time to pay? Request a reservation</span>
+            <ArrowRight size={14} />
+          </button>
+
+          <div className="pdp-trust-strip">
+            <div className="pdp-trust-item">
+              <ShieldCheck size={16} color="var(--green)" />
+              <div>
+                <strong>Condition checked</strong>
+                <span>Inspected and tested</span>
+              </div>
+            </div>
+            <div className="pdp-trust-item">
+              <Warehouse size={16} color="var(--green)" />
+              <div>
+                <strong>Warehouse collection</strong>
+                <span>Community 25, Tema</span>
+              </div>
+            </div>
+            <div className="pdp-trust-item">
+              <RotateCcw size={16} color="var(--green)" />
+              <div>
+                <strong>7-day returns</strong>
+                <span>Management reviewed</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="pdp-accordion">
+            <button
+              type="button"
+              className="pdp-accordion-trigger"
+              aria-expanded={detailsOpen}
+              onClick={() => setDetailsOpen((o) => !o)}
+            >
+              <span>Product details</span>
+              {detailsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </button>
+            {detailsOpen && (
+              <div className="pdp-accordion-body">
+                <div className="pdp-detail-row">
+                  <span>Brand</span>
+                  <strong>{product.brand}</strong>
+                </div>
+                <div className="pdp-detail-row">
+                  <span>Condition</span>
+                  <strong>{product.condition}</strong>
+                </div>
+                <div className="pdp-detail-row">
+                  <span>Source</span>
+                  <strong>{product.sourceBatch}</strong>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="pdp-accordion">
+            <button
+              type="button"
+              className="pdp-accordion-trigger"
+              aria-expanded={defectsOpen}
+              onClick={() => setDefectsOpen((o) => !o)}
+            >
+              <span>Condition &amp; disclosed defects</span>
+              {defectsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </button>
+            {defectsOpen && (
+              <div className="pdp-accordion-body">
+                <p style={{ margin: 0, fontSize: 12.5, color: 'var(--muted)' }}>
+                  {product.defectsNote}
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {reserveOpen && (
+        <div className="login-backdrop" role="dialog" aria-modal="true" onClick={() => setReserveOpen(false)}>
+          <div className="login-card" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className="login-close"
+              onClick={() => setReserveOpen(false)}
+              aria-label="Close reservation dialog"
+            >
+              <X size={17} />
+            </button>
+
+            <div className="login-inner">
+              {reservedRef ? (
+                <div style={{ textAlign: 'center' }}>
+                  <div className="order-confirm-check" style={{ margin: '0 auto 18px' }}>
+                    <Check size={24} strokeWidth={2.5} />
+                  </div>
+                  <div className="eyebrow">Reservation requested</div>
+                  <h2 className="login-title" style={{ fontSize: 24 }}>
+                    Hold request submitted
+                  </h2>
+                  <p className="login-subtitle" style={{ marginTop: 10 }}>
+                    Reference <strong>{reservedRef}</strong> for {qty} × {product.name} (
+                    {activeVariant?.name}) is pending staff approval. You’ll receive a payment
+                    deadline once approved.
+                  </p>
+                  <Link
+                    href="/account/reservations"
+                    onClick={() => setReserveOpen(false)}
+                    className="button primary"
+                    style={{ width: '100%', minHeight: 46, marginTop: 22 }}
+                  >
+                    View my reservations
+                  </Link>
+                </div>
+              ) : (
+                <>
+                  <div className="eyebrow">Stock hold</div>
+                  <h2 className="login-title" style={{ fontSize: 24 }}>
+                    Request a reservation
+                  </h2>
+                  <p className="login-subtitle">
+                    {qty} × <strong>{product.name}</strong> ({activeVariant?.name}) ·{' '}
+                    <strong>{formatGHS(totalPesewas)}</strong>. Staff review is required before the
+                    hold is confirmed.
+                  </p>
+
+                  <form onSubmit={handleSubmitReserve} className="login-form">
+                    <label className="login-label" htmlFor="reserve-notes">
+                      Notes for staff (optional)
+                    </label>
+                    <textarea
+                      id="reserve-notes"
+                      rows={3}
+                      value={reserveNotes}
+                      onChange={(e) => setReserveNotes(e.target.value)}
+                      placeholder="e.g. Planning to pay tomorrow afternoon"
+                      style={{
+                        width: '100%',
+                        padding: 12,
+                        border: '0.8px solid var(--line)',
+                        borderRadius: 4,
+                        marginBottom: 18,
+                      }}
+                    />
+                    {reserveError && (
+                      <div
+                        role="alert"
+                        style={{
+                          marginBottom: 14,
+                          padding: '10px 12px',
+                          border: '1px solid #f0c2bd',
+                          background: '#fdf3f2',
+                          color: '#b42318',
+                          fontSize: 13,
+                        }}
+                      >
+                        {reserveError}
+                      </div>
+                    )}
+                    <button type="submit" className="button primary login-submit">
+                      <span>Submit reservation request</span>
+                      <ArrowRight size={15} />
+                    </button>
+                  </form>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </main>
+  );
+}

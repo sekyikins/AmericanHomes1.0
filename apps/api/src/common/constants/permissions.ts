@@ -1,0 +1,127 @@
+export const PERMISSIONS = {
+  INVENTORY: {
+    VIEW_STOCK: 'inventory.view',
+    ADJUST_STOCK: 'inventory.adjust',
+    APPROVE_ADJUSTMENT: 'inventory.approve_adjustment',
+  },
+  STOCKTAKES: {
+    VIEW: 'stocktakes.view',
+    MANAGE: 'stocktakes.manage',
+    APPROVE: 'stocktakes.approve',
+  },
+  ORDERS: {
+    VIEW: 'orders.view',
+    CREATE_WALK_IN: 'orders.create_walk_in',
+    APPROVE_SALE: 'orders.approve',
+    CANCEL: 'orders.cancel',
+  },
+  PAYMENTS: {
+    VIEW: 'payments.view',
+    RECORD_MANUAL: 'payments.record_manual',
+    APPROVE_MANUAL: 'payments.approve_manual',
+    PROCESS_REFUND: 'payments.refund',
+  },
+  SHIPMENTS: {
+    VIEW: 'shipments.view',
+    CREATE: 'shipments.create',
+    UPDATE: 'shipments.update',
+    CLOSE: 'shipments.close',
+    MANAGE: 'shipments.manage',
+  },
+  RECEIVING: {
+    VIEW: 'receiving.view',
+    CREATE: 'receiving.create',
+    MANAGE: 'receiving.manage',
+    RESOLVE_DISCREPANCY: 'receiving.resolve_discrepancy',
+  },
+  CATALOGUE: {
+    VIEW: 'catalogue.view',
+    CREATE: 'catalogue.create',
+    UPDATE: 'catalogue.update',
+    MANAGE: 'catalogue.manage',
+    APPROVE_PRICE: 'catalogue.approve_price',
+    PUBLISH: 'catalogue.publish',
+  },
+  REQUESTS: {
+    VIEW: 'product_requests.view',
+    REVIEW: 'product_requests.review',
+    VIEW_SOURCING: 'sourcing.view',
+    MANAGE_SOURCING: 'sourcing.manage',
+    VIEW_ALLOCATIONS: 'allocations.view',
+    MANAGE_ALLOCATIONS: 'allocations.manage',
+  },
+  RESERVATIONS: {
+    VIEW: 'reservations.view',
+    APPROVE: 'reservations.approve',
+  },
+  COLLECTIONS: {
+    VIEW: 'collections.view',
+    MANAGE: 'collections.manage',
+  },
+  RETURNS: {
+    VIEW: 'returns.view',
+    REVIEW: 'returns.review',
+    APPROVE: 'returns.approve',
+  },
+  EXPENSES: {
+    VIEW: 'expenses.view',
+    CREATE: 'expenses.create',
+    MANAGE: 'expenses.manage',
+  },
+  REPORTS: {
+    VIEW: 'reports.view',
+    EXPORT: 'reports.export',
+  },
+  CUSTOMERS: {
+    VIEW: 'customers.view',
+  },
+  STAFF: {
+    VIEW: 'staff.view',
+    CREATE: 'staff.create',
+    UPDATE: 'staff.update',
+    DEACTIVATE: 'staff.deactivate',
+    MANAGE: 'staff.manage',
+  },
+  PERMISSIONS: {
+    VIEW: 'permissions.view',
+    MANAGE: 'permissions.manage',
+  },
+  GOVERNANCE: {
+    VIEW_ANNOUNCEMENTS: 'announcements.view',
+    MANAGE_ANNOUNCEMENTS: 'announcements.manage',
+    VIEW_INCIDENTS: 'incidents.view',
+    MANAGE_INCIDENTS: 'incidents.manage',
+  },
+  AUDIT: {
+    VIEW: 'audit.view',
+  },
+  STAFF_REPORTS: {
+    VIEW: 'staff_reports.view',
+    MANAGE: 'staff_reports.manage',
+  },
+} as const;
+
+export const PERMISSION_IMPLIED_BY: Record<string, string[]> = {
+  'shipments.create': ['shipments.manage'],
+  'shipments.update': ['shipments.manage'],
+  'shipments.close': ['shipments.manage'],
+  'receiving.create': ['receiving.manage'],
+  'catalogue.create': ['catalogue.manage'],
+  'catalogue.update': ['catalogue.manage'],
+  'stocktakes.view': ['stocktakes.manage', 'inventory.view'],
+  'collections.view': ['collections.manage'],
+  'returns.view': ['returns.review', 'returns.approve'],
+  'expenses.create': ['expenses.manage'],
+  'sourcing.view': ['sourcing.manage'],
+  'allocations.view': ['allocations.manage'],
+  'orders.cancel': ['orders.approve'],
+  'staff.create': ['staff.manage'],
+  'staff.update': ['staff.manage'],
+  'staff.deactivate': ['staff.manage'],
+  'permissions.view': ['permissions.manage'],
+  'announcements.view': ['announcements.manage', 'catalogue.view'],
+  'announcements.manage': ['catalogue.publish'],
+  'incidents.view': ['incidents.manage', 'inventory.view'],
+  'incidents.manage': ['inventory.approve_adjustment'],
+  'staff_reports.view': ['staff_reports.manage'],
+};
