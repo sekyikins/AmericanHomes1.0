@@ -6,6 +6,7 @@ import { RequirePermission } from '../../common/decorators/permissions.decorator
 import { AuthGuard } from '../../common/guards/auth.guard';
 import { OwnerOnly, OwnerOnlyGuard } from '../../common/guards/owner-only.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { UploadEvidenceDto } from './dto/upload-evidence.dto';
 import { GovernanceService } from './governance.service';
 
 @Controller('governance')
@@ -152,7 +153,7 @@ export class GovernanceController {
   @Post('uploads')
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
-  upload(@Body() dto: { folder: string; filename: string; mimetype: string; base64: string }) {
+  upload(@Body() dto: UploadEvidenceDto) {
     return this.gov.uploadEvidenceBase64(dto);
   }
 

@@ -1,7 +1,20 @@
 'use client';
 
 import type { ProductVariantOption } from '@/components/staff/ProductVariantCombobox';
-import { StaffFilterDropdown } from '@/components/staff/StaffFilterDropdown';
+import {
+  ActiveFilterChips,
+  HierarchicalFilterDropdown,
+  SortableHeader,
+} from '@/components/staff/TableControls';
+import {
+  applyFiltersAndSort,
+  cycleSort,
+  deriveFilterCategories,
+  type FilterCategoryDef,
+  type FilterValueMap,
+  type SortColumnDef,
+  type SortState,
+} from '@/lib/tableUtils';
 import {
   CreateShipmentView,
   type DraftManifestRow,
@@ -23,7 +36,7 @@ import { catalogueApi, governanceApi, receivingApi, shipmentsApi } from '@/lib/a
 import { downloadCsv } from '@/lib/staffUtils';
 import { useToast } from '@/providers/toast.provider';
 import { ChevronRight, Download, Plus, Search } from 'lucide-react';
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 
 export default function StaffShipmentsPage() {
   const { showToast } = useToast();
@@ -48,7 +61,8 @@ export default function StaffShipmentsPage() {
   const [selectedId, setSelectedId] = useState('');
   const [activeTab, setActiveTab] = useState<DetailTab>('overview');
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'All' | 'Open' | 'Closed' | ShipmentStatus>('All');
+  const [filters, setFilters] = useState<FilterValueMap>({});
+  const [sort, setSort] = useState<SortState>(null);
   const [showRevisionNote, setShowRevisionNote] = useState(false);
 
   const [newRef, setNewRef] = useState(() => `AH-SHP-${new Date().getFullYear()}-${String(Date.now()).slice(-3)}`);
@@ -135,24 +149,53 @@ export default function StaffShipmentsPage() {
     return full;
   };
 
-  const visibleShipments = shipments.filter((s) => {
-    const matchesStatus =
-      statusFilter === 'All'
-        ? true
-        : statusFilter === 'Open'
-          ? s.status !== 'Reconciled'
-          : statusFilter === 'Closed'
-            ? s.status === 'Reconciled'
-            : s.status === statusFilter;
-    if (!matchesStatus) return false;
-    if (!search.trim()) return true;
-    const q = search.toLowerCase();
-    return (
-      s.reference.toLowerCase().includes(q) ||
-      s.providerShort.toLowerCase().includes(q) ||
-      s.providerFull.toLowerCase().includes(q)
-    );
-  });
+  const filterDefs: FilterCategoryDef<ShipmentRecord>[] = useMemo(
+    () => [
+      { key: 'status', label: 'Status', accessor: (s) => s.status },
+      { key: 'provider', label: 'Provider', accessor: (s) => s.providerShort },
+      {
+        key: 'lifecycle',
+        label: 'State',
+        accessor: (s) => (s.status === 'Reconciled' ? 'Closed' : 'Open'),
+      },
+    ],
+    [],
+  );
+
+  const sortDefs: SortColumnDef<ShipmentRecord>[] = useMemo(
+    () => [
+      { key: 'reference', type: 'string', accessor: (s) => s.reference },
+      { key: 'provider', type: 'string', accessor: (s) => s.providerShort },
+      {
+        key: 'status',
+        type: 'status',
+        statusOrder: ['Planned', 'In transit', 'Arrived', 'Receiving', 'Reconciliation pending', 'Reconciled'],
+        accessor: (s) => s.status,
+      },
+      { key: 'expectedArrival', type: 'date', accessor: (s) => s.expectedArrivalShort },
+      { key: 'manifest', type: 'number', accessor: (s) => s.manifestCount },
+      { key: 'receiving', type: 'number', accessor: (s) => s.receivedCount },
+      { key: 'expenses', type: 'currency', accessor: (s) => s.expensesTotal },
+    ],
+    [],
+  );
+
+  const filterCategories = useMemo(() => deriveFilterCategories(shipments, filterDefs), [shipments, filterDefs]);
+
+  const visibleShipments = useMemo(() => {
+    const searched = shipments.filter((s) => {
+      if (!search.trim()) return true;
+      const q = search.toLowerCase();
+      return (
+        s.reference.toLowerCase().includes(q) ||
+        s.providerShort.toLowerCase().includes(q) ||
+        s.providerFull.toLowerCase().includes(q)
+      );
+    });
+    return applyFiltersAndSort(searched, filters, filterDefs, sort, sortDefs);
+  }, [shipments, search, filters, filterDefs, sort, sortDefs]);
+
+  const hasActiveFilters = Object.values(filters).some((vals) => vals && vals.length > 0);
 
   const handleCompleteShipment = async () => {
     if (!selectedShipment || submitting) return;
@@ -458,21 +501,10 @@ export default function StaffShipmentsPage() {
           />
         </label>
 
-        <StaffFilterDropdown
-          label="Status"
-          value={statusFilter}
-          options={[
-            'All',
-            'Open',
-            'Closed',
-            'Planned',
-            'In transit',
-            'Arrived',
-            'Receiving',
-            'Reconciliation pending',
-            'Reconciled',
-          ]}
-          onChange={setStatusFilter}
+        <HierarchicalFilterDropdown
+          categories={filterCategories}
+          selected={filters}
+          onChange={setFilters}
         />
 
         <button
@@ -500,15 +532,21 @@ export default function StaffShipmentsPage() {
         </button>
       </div>
 
+      <ActiveFilterChips
+        categories={filterCategories}
+        selected={filters}
+        onChange={setFilters}
+      />
+
       <section className="acct-panel" style={{ padding: 0 }} data-node-id="2:12731">
         <div className="staff-table-head staff-ship-cols">
-          <span>SHIPMENT</span>
-          <span>PROVIDER</span>
-          <span>STATUS</span>
-          <span>EXPECTED ARRIVAL</span>
-          <span>MANIFEST</span>
-          <span>RECEIVING</span>
-          <span>EXPENSES</span>
+          <SortableHeader label="SHIPMENT" sortKey="reference" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="PROVIDER" sortKey="provider" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="STATUS" sortKey="status" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="EXPECTED ARRIVAL" sortKey="expectedArrival" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="MANIFEST" sortKey="manifest" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="RECEIVING" sortKey="receiving" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="EXPENSES" sortKey="expenses" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
           <span />
         </div>
 
@@ -521,15 +559,15 @@ export default function StaffShipmentsPage() {
         ) : visibleShipments.length === 0 ? (
           <EmptyState
             title="No shipments found"
-            description="Create a new shipment or clear your search/status filter."
+            description="Create a new shipment or clear your search/filters."
             action={
-              search || statusFilter !== 'All' ? (
+              search || hasActiveFilters ? (
                 <button
                   type="button"
                   className="button"
                   onClick={() => {
                     setSearch('');
-                    setStatusFilter('All');
+                    setFilters({});
                   }}
                 >
                   Clear filters

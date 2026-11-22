@@ -1,9 +1,22 @@
 'use client';
 
 import { ProductRecordModal } from '@/components/staff/products/ProductModals';
-import { StaffFilterDropdown } from '@/components/staff/StaffFilterDropdown';
+import {
+  ActiveFilterChips,
+  HierarchicalFilterDropdown,
+  SortableHeader,
+} from '@/components/staff/TableControls';
 import { ConfirmDialog, EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
 import { catalogueApi, shipmentsApi } from '@/lib/api';
+import {
+  applyFiltersAndSort,
+  cycleSort,
+  deriveFilterCategories,
+  type FilterCategoryDef,
+  type FilterValueMap,
+  type SortColumnDef,
+  type SortState,
+} from '@/lib/tableUtils';
 import { useToast } from '@/providers/toast.provider';
 import {
   ChevronRight,
@@ -12,7 +25,7 @@ import {
   Search,
 } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
-import { Suspense, useCallback, useEffect, useState, type FormEvent } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 
 type PreparationStatus = 'Complete' | 'In progress';
 type PublicationStatus = 'Published' | 'Draft';
@@ -45,7 +58,8 @@ function StaffProductsContent() {
     const query = searchParams.get('search');
     if (query !== null) setSearch(query);
   }, [searchParams]);
-  const [pubFilter, setPubFilter] = useState<'All' | PublicationStatus>('All');
+  const [filters, setFilters] = useState<FilterValueMap>({});
+  const [sort, setSort] = useState<SortState>(null);
 
   const [modalMode, setModalMode] = useState<'create' | 'edit' | null>(null);
   const [editingProduct, setEditingProduct] = useState<ProductRecord | null>(
@@ -147,18 +161,55 @@ function StaffProductsContent() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [modalMode]);
 
-  const visible = products.filter((p) => {
-    const matchesPub = pubFilter === 'All' || p.publication === pubFilter;
-    if (!matchesPub) return false;
-    if (!search.trim()) return true;
-    const q = search.toLowerCase();
-    return (
-      p.name.toLowerCase().includes(q) ||
-      p.identifier.toLowerCase().includes(q) ||
-      p.shipment.toLowerCase().includes(q) ||
-      p.category.toLowerCase().includes(q)
-    );
-  });
+  const filterDefs: FilterCategoryDef<ProductRecord>[] = useMemo(
+    () => [
+      { key: 'publication', label: 'Publication', accessor: (p) => p.publication },
+      { key: 'category', label: 'Category', accessor: (p) => p.category },
+      { key: 'preparation', label: 'Preparation', accessor: (p) => p.preparation },
+      { key: 'shipment', label: 'Shipment', accessor: (p) => (p.shipment === '—' ? '' : p.shipment) },
+    ],
+    [],
+  );
+
+  const sortDefs: SortColumnDef<ProductRecord>[] = useMemo(
+    () => [
+      { key: 'name', type: 'string', accessor: (p) => p.name },
+      { key: 'identifier', type: 'string', accessor: (p) => p.identifier },
+      { key: 'shipment', type: 'string', accessor: (p) => p.shipment },
+      {
+        key: 'preparation',
+        type: 'status',
+        statusOrder: ['In progress', 'Complete'],
+        accessor: (p) => p.preparation,
+      },
+      { key: 'availableCount', type: 'number', accessor: (p) => p.availableCount },
+      {
+        key: 'publication',
+        type: 'status',
+        statusOrder: ['Draft', 'Published'],
+        accessor: (p) => p.publication,
+      },
+    ],
+    [],
+  );
+
+  const filterCategories = useMemo(() => deriveFilterCategories(products, filterDefs), [products, filterDefs]);
+
+  const visible = useMemo(() => {
+    const searched = products.filter((p) => {
+      if (!search.trim()) return true;
+      const q = search.toLowerCase();
+      return (
+        p.name.toLowerCase().includes(q) ||
+        p.identifier.toLowerCase().includes(q) ||
+        p.shipment.toLowerCase().includes(q) ||
+        p.category.toLowerCase().includes(q)
+      );
+    });
+    return applyFiltersAndSort(searched, filters, filterDefs, sort, sortDefs);
+  }, [products, search, filters, filterDefs, sort, sortDefs]);
+
+  const hasActiveFilters = Object.values(filters).some((vals) => vals && vals.length > 0);
 
   const openCreate = () => {
     setModalMode('create');
@@ -318,11 +369,10 @@ function StaffProductsContent() {
           />
         </label>
 
-        <StaffFilterDropdown
-          label="Publication"
-          value={pubFilter}
-          options={['All', 'Published', 'Draft']}
-          onChange={setPubFilter}
+        <HierarchicalFilterDropdown
+          categories={filterCategories}
+          selected={filters}
+          onChange={setFilters}
         />
 
         <button
@@ -336,14 +386,20 @@ function StaffProductsContent() {
         </button>
       </div>
 
+      <ActiveFilterChips
+        categories={filterCategories}
+        selected={filters}
+        onChange={setFilters}
+      />
+
       <section className="acct-panel" style={{ padding: 0 }}>
         <div className="staff-table-head staff-prod-cols">
-          <span>PRODUCT</span>
-          <span>IDENTIFIER</span>
-          <span>SHIPMENT</span>
-          <span>PREPARATION</span>
-          <span>AVAILABILITY</span>
-          <span>PUBLICATION</span>
+          <SortableHeader label="PRODUCT" sortKey="name" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="IDENTIFIER" sortKey="identifier" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="SHIPMENT" sortKey="shipment" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="PREPARATION" sortKey="preparation" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="AVAILABILITY" sortKey="availableCount" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="PUBLICATION" sortKey="publication" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
           <span />
         </div>
 
@@ -356,15 +412,15 @@ function StaffProductsContent() {
         ) : visible.length === 0 ? (
           <EmptyState
             title="No products found"
-            description="No products match your search or publication filter."
+            description="No products match your search or filters."
             action={
-              search || pubFilter !== 'All' ? (
+              search || hasActiveFilters ? (
                 <button
                   type="button"
                   className="button"
                   onClick={() => {
                     setSearch('');
-                    setPubFilter('All');
+                    setFilters({});
                   }}
                 >
                   Clear filters

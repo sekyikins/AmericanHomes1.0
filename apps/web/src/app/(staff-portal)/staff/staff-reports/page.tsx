@@ -1,11 +1,24 @@
 'use client';
 
 import { CheckCircle2, Search, XCircle } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
-import { StaffFilterDropdown } from '@/components/staff/StaffFilterDropdown';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  ActiveFilterChips,
+  HierarchicalFilterDropdown,
+  SortableHeader,
+} from '@/components/staff/TableControls';
 import { StaffModal } from '@/components/staff/StaffModal';
 import { Button, EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
 import { governanceApi } from '@/lib/api';
+import {
+  applyFiltersAndSort,
+  cycleSort,
+  deriveFilterCategories,
+  type FilterCategoryDef,
+  type FilterValueMap,
+  type SortColumnDef,
+  type SortState,
+} from '@/lib/tableUtils';
 import { useToast } from '@/providers/toast.provider';
 import { useAuth } from '@/store/auth.store';
 
@@ -29,7 +42,8 @@ export default function StaffReportsPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState<'ALL' | 'REQUESTS' | 'REPORTS'>('ALL');
-  const [statusFilter, setStatusFilter] = useState<'All reports' | 'Submitted' | 'Addressed' | 'Declined'>('All reports');
+  const [filters, setFilters] = useState<FilterValueMap>({});
+  const [sort, setSort] = useState<SortState>(null);
   const [search, setSearch] = useState('');
 
   const [selected, setSelected] = useState<StaffReportRow | null>(null);
@@ -76,21 +90,49 @@ export default function StaffReportsPage() {
     loadReports();
   }, [loadReports]);
 
-  const visible = reports.filter((r) => {
-    const matchesType =
-      typeFilter === 'ALL' ||
-      (typeFilter === 'REQUESTS' ? r.category === 'PROFILE_CHANGE' : r.category !== 'PROFILE_CHANGE');
-    const matchesStatus =
-      statusFilter === 'All reports' || r.status === statusFilter.toUpperCase();
+  const filterDefs: FilterCategoryDef<StaffReportRow>[] = useMemo(
+    () => [
+      { key: 'status', label: 'Status', accessor: (r) => r.status },
+      { key: 'category', label: 'Category', accessor: (r) => r.category },
+    ],
+    [],
+  );
+
+  const sortDefs: SortColumnDef<StaffReportRow>[] = useMemo(
+    () => [
+      { key: 'title', type: 'string', accessor: (r) => r.title },
+      { key: 'category', type: 'string', accessor: (r) => r.category },
+      { key: 'reporterName', type: 'string', accessor: (r) => r.reporterName },
+      {
+        key: 'status',
+        type: 'status',
+        statusOrder: ['SUBMITTED', 'ADDRESSED', 'DECLINED'],
+        accessor: (r) => r.status,
+      },
+    ],
+    [],
+  );
+
+  const filterCategories = useMemo(() => deriveFilterCategories(reports, filterDefs), [reports, filterDefs]);
+
+  const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const matchesSearch =
-      !q ||
-      r.title.toLowerCase().includes(q) ||
-      r.description.toLowerCase().includes(q) ||
-      r.reporterName.toLowerCase().includes(q) ||
-      r.category.toLowerCase().includes(q);
-    return matchesType && matchesStatus && matchesSearch;
-  });
+    const searched = reports.filter((r) => {
+      const matchesType =
+        typeFilter === 'ALL' ||
+        (typeFilter === 'REQUESTS' ? r.category === 'PROFILE_CHANGE' : r.category !== 'PROFILE_CHANGE');
+      const matchesSearch =
+        !q ||
+        r.title.toLowerCase().includes(q) ||
+        r.description.toLowerCase().includes(q) ||
+        r.reporterName.toLowerCase().includes(q) ||
+        r.category.toLowerCase().includes(q);
+      return matchesType && matchesSearch;
+    });
+    return applyFiltersAndSort(searched, filters, filterDefs, sort, sortDefs);
+  }, [reports, typeFilter, search, filters, filterDefs, sort, sortDefs]);
+
+  const hasActiveFilters = Object.values(filters).some((vals) => vals && vals.length > 0);
 
   const handleConfirmAction = async () => {
     if (!selected || !pendingAction || acting) return;
@@ -171,23 +213,28 @@ export default function StaffReportsPage() {
           />
         </label>
 
-        <StaffFilterDropdown
-          label="Status"
-          value={statusFilter}
-          options={['All reports', 'Submitted', 'Addressed', 'Declined']}
-          onChange={(v) => setStatusFilter(v as typeof statusFilter)}
+        <HierarchicalFilterDropdown
+          categories={filterCategories}
+          selected={filters}
+          onChange={setFilters}
         />
       </div>
+
+      <ActiveFilterChips
+        categories={filterCategories}
+        selected={filters}
+        onChange={setFilters}
+      />
 
       <section className="acct-panel" style={{ padding: 0, overflowX: 'auto' }}>
         <div
           className="staff-table-head"
           style={{ gridTemplateColumns: 'minmax(260px, 1.8fr) 120px 140px 130px max-content', minWidth: 740 }}
         >
-          <span>REPORT / REQUEST</span>
-          <span>CATEGORY</span>
-          <span>SUBMITTED BY</span>
-          <span>STATUS</span>
+          <SortableHeader label="REPORT / REQUEST" sortKey="title" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="CATEGORY" sortKey="category" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="SUBMITTED BY" sortKey="reporterName" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="STATUS" sortKey="status" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
           <span style={{ textAlign: 'right' }}>ACTION</span>
         </div>
 
@@ -203,6 +250,20 @@ export default function StaffReportsPage() {
           <EmptyState
             title="No staff reports or requests found"
             description="Submitted staff reports and profile change requests will appear here."
+            action={
+              search || hasActiveFilters ? (
+                <button
+                  type="button"
+                  className="button"
+                  onClick={() => {
+                    setSearch('');
+                    setFilters({});
+                  }}
+                >
+                  Clear filters
+                </button>
+              ) : undefined
+            }
           />
         ) : (
           visible.map((r) => (

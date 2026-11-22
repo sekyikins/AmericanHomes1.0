@@ -1,10 +1,23 @@
 'use client';
 
 import { OrderRecordModal } from '@/components/staff/orders/OrderModals';
-import { StaffFilterDropdown } from '@/components/staff/StaffFilterDropdown';
+import {
+  ActiveFilterChips,
+  HierarchicalFilterDropdown,
+  SortableHeader,
+} from '@/components/staff/TableControls';
 import { ConfirmDialog, EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
 import { catalogueApi, ordersApi } from '@/lib/api';
 import { downloadCsv, formatStatusLabel, shortRef } from '@/lib/staffUtils';
+import {
+  applyFiltersAndSort,
+  cycleSort,
+  deriveFilterCategories,
+  type FilterCategoryDef,
+  type FilterValueMap,
+  type SortColumnDef,
+  type SortState,
+} from '@/lib/tableUtils';
 import { useToast } from '@/providers/toast.provider';
 import {
   ChevronRight,
@@ -13,7 +26,7 @@ import {
   Search,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 
 type OrderRow = {
   id: string;
@@ -42,7 +55,8 @@ export default function StaffOrdersPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [search, setSearch] = useState('');
-  const [paymentFilter, setPaymentFilter] = useState('All');
+  const [filters, setFilters] = useState<FilterValueMap>({});
+  const [sort, setSort] = useState<SortState>(null);
   const [sourceFilter, setSourceFilter] = useState('All');
   const [modalMode, setModalMode] = useState<'create' | 'edit' | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -141,17 +155,54 @@ export default function StaffOrdersPage() {
     loadData();
   }, [loadData]);
 
-  const visible = orders.filter((o) => {
-    if (paymentFilter !== 'All' && o.payment.toUpperCase() !== paymentFilter.toUpperCase()) return false;
-    if (sourceFilter !== 'All' && o.source !== sourceFilter) return false;
-    if (!search.trim()) return true;
-    const q = search.toLowerCase();
-    return (
-      o.reference.toLowerCase().includes(q) ||
-      o.customer.toLowerCase().includes(q) ||
-      o.product.toLowerCase().includes(q)
-    );
-  });
+  const filterDefs: FilterCategoryDef<OrderRow>[] = useMemo(
+    () => [
+      { key: 'payment', label: 'Payment', accessor: (o) => o.payment },
+      { key: 'collection', label: 'Collection', accessor: (o) => o.collection },
+      { key: 'source', label: 'Channel', accessor: (o) => o.source },
+    ],
+    [],
+  );
+
+  const sortDefs: SortColumnDef<OrderRow>[] = useMemo(
+    () => [
+      { key: 'reference', type: 'string', accessor: (o) => o.reference },
+      { key: 'customer', type: 'string', accessor: (o) => o.customer },
+      { key: 'amount', type: 'currency', accessor: (o) => o.amountOrQty },
+      {
+        key: 'payment',
+        type: 'status',
+        statusOrder: ['Pending', 'Partial', 'Paid', 'Refunded', 'Cancelled'],
+        accessor: (o) => o.payment,
+      },
+      {
+        key: 'collection',
+        type: 'status',
+        statusOrder: ['Pending', 'Awaiting collection', 'Ready for pickup', 'Partially collected', 'Collected', 'Cancelled'],
+        accessor: (o) => o.collection,
+      },
+      { key: 'date', type: 'date', accessor: (o) => o.date },
+    ],
+    [],
+  );
+
+  const filterCategories = useMemo(() => deriveFilterCategories(orders, filterDefs), [orders, filterDefs]);
+
+  const visible = useMemo(() => {
+    const searched = orders.filter((o) => {
+      if (sourceFilter !== 'All' && o.source !== sourceFilter) return false;
+      if (!search.trim()) return true;
+      const q = search.toLowerCase();
+      return (
+        o.reference.toLowerCase().includes(q) ||
+        o.customer.toLowerCase().includes(q) ||
+        o.product.toLowerCase().includes(q)
+      );
+    });
+    return applyFiltersAndSort(searched, filters, filterDefs, sort, sortDefs);
+  }, [orders, sourceFilter, search, filters, filterDefs, sort, sortDefs]);
+
+  const hasActiveFilters = Object.values(filters).some((vals) => vals && vals.length > 0);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -238,11 +289,10 @@ export default function StaffOrdersPage() {
           />
         </label>
 
-        <StaffFilterDropdown
-          label="Payment"
-          value={paymentFilter}
-          options={['All', 'Pending', 'Partial', 'Paid']}
-          onChange={setPaymentFilter}
+        <HierarchicalFilterDropdown
+          categories={filterCategories}
+          selected={filters}
+          onChange={setFilters}
         />
 
         <button
@@ -271,14 +321,20 @@ export default function StaffOrdersPage() {
         </button>
       </div>
 
+      <ActiveFilterChips
+        categories={filterCategories}
+        selected={filters}
+        onChange={setFilters}
+      />
+
       <section className="acct-panel" style={{ padding: 0 }}>
         <div className="staff-table-head staff-sales-cols">
-          <span>REFERENCE</span>
-          <span>CUSTOMER</span>
-          <span>AMOUNT</span>
-          <span>PAYMENT</span>
-          <span>COLLECTION</span>
-          <span>DATE</span>
+          <SortableHeader label="REFERENCE" sortKey="reference" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="CUSTOMER" sortKey="customer" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="AMOUNT" sortKey="amount" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="PAYMENT" sortKey="payment" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="COLLECTION" sortKey="collection" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="DATE" sortKey="date" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
           <span />
         </div>
 
@@ -291,15 +347,15 @@ export default function StaffOrdersPage() {
         ) : visible.length === 0 ? (
           <EmptyState
             title="No orders found"
-            description="No orders match your current search or payment filter."
+            description="No orders match your current search or filters."
             action={
-              search || paymentFilter !== 'All' ? (
+              search || hasActiveFilters ? (
                 <button
                   type="button"
                   className="button"
                   onClick={() => {
                     setSearch('');
-                    setPaymentFilter('All');
+                    setFilters({});
                   }}
                 >
                   Clear filters

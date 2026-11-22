@@ -4,9 +4,22 @@ import {
   ReceivingNoteModal,
   StartReceivingSessionModal,
 } from '@/components/staff/receiving/ReceivingModals';
-import { StaffFilterDropdown } from '@/components/staff/StaffFilterDropdown';
+import {
+  ActiveFilterChips,
+  HierarchicalFilterDropdown,
+  SortableHeader,
+} from '@/components/staff/TableControls';
 import { Button, ConfirmDialog, EmptyState, ErrorState, SearchableSelect, TableSkeleton } from '@/components/ui';
 import { receivingApi, shipmentsApi } from '@/lib/api';
+import {
+  applyFiltersAndSort,
+  cycleSort,
+  deriveFilterCategories,
+  type FilterCategoryDef,
+  type FilterValueMap,
+  type SortColumnDef,
+  type SortState,
+} from '@/lib/tableUtils';
 import { useToast } from '@/providers/toast.provider';
 import {
   AlertTriangle,
@@ -17,7 +30,7 @@ import {
   Plus,
 } from 'lucide-react';
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 type InspectionStatus = 'GOOD' | 'DAMAGED' | 'INCOMPLETE';
 
@@ -76,7 +89,9 @@ export default function StaffReceivingPage() {
   const { showToast } = useToast();
   const [sessions, setSessions] = useState<ApiSession[]>([]);
   const [shipments, setShipments] = useState<ApiShipment[]>([]);
-  const [sessionFilter, setSessionFilter] = useState<'All' | 'Open' | 'Closed'>('All');
+  const [sessionFilters, setSessionFilters] = useState<FilterValueMap>({});
+  const [itemFilters, setItemFilters] = useState<FilterValueMap>({});
+  const [sort, setSort] = useState<SortState>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string>('');
   const [items, setItems] = useState<ReceivingItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -232,12 +247,73 @@ export default function StaffReceivingPage() {
       ['ARRIVED', 'RECEIVING', 'RECONCILIATION_PENDING'].includes(s.status) &&
       !openShipmentIds.has(s.id),
   );
-  const visibleSessions = sessions.filter((s) =>
-    sessionFilter === 'All'
-      ? true
-      : sessionFilter === 'Open'
-        ? s.status === 'OPEN'
-        : s.status === 'CLOSED',
+  const sessionFilterDefs: FilterCategoryDef<ApiSession>[] = useMemo(
+    () => [
+      {
+        key: 'status',
+        label: 'Session status',
+        accessor: (s) => (s.status === 'OPEN' ? 'Open' : 'Closed'),
+      },
+    ],
+    [],
+  );
+
+  const sessionFilterCategories = useMemo(
+    () => deriveFilterCategories(sessions, sessionFilterDefs),
+    [sessions, sessionFilterDefs],
+  );
+
+  const visibleSessions = useMemo(
+    () =>
+      applyFiltersAndSort(
+        sessions,
+        sessionFilters,
+        sessionFilterDefs,
+        null,
+        [],
+      ),
+    [sessions, sessionFilters, sessionFilterDefs],
+  );
+
+  const itemFilterDefs: FilterCategoryDef<ReceivingItem>[] = useMemo(
+    () => [
+      { key: 'inspection', label: 'Inspection', accessor: (i) => i.inspection },
+      {
+        key: 'variance',
+        label: 'Variance',
+        accessor: (i) => {
+          const diff = i.received - i.expected;
+          return diff === 0 ? 'Matched' : diff < 0 ? 'Missing' : 'Excess';
+        },
+      },
+    ],
+    [],
+  );
+
+  const itemSortDefs: SortColumnDef<ReceivingItem>[] = useMemo(
+    () => [
+      { key: 'product', type: 'string', accessor: (i) => i.product },
+      { key: 'expected', type: 'number', accessor: (i) => i.expected },
+      { key: 'received', type: 'number', accessor: (i) => i.received },
+      { key: 'variance', type: 'number', accessor: (i) => i.received - i.expected },
+      {
+        key: 'inspection',
+        type: 'status',
+        statusOrder: ['GOOD', 'INCOMPLETE', 'DAMAGED'],
+        accessor: (i) => i.inspection,
+      },
+    ],
+    [],
+  );
+
+  const itemFilterCategories = useMemo(
+    () => deriveFilterCategories(items, itemFilterDefs),
+    [items, itemFilterDefs],
+  );
+
+  const visibleItems = useMemo(
+    () => applyFiltersAndSort(items, itemFilters, itemFilterDefs, sort, itemSortDefs),
+    [items, itemFilters, itemFilterDefs, sort, itemSortDefs],
   );
   const activeSession =
     visibleSessions.find((s) => s.id === selectedSessionId) ??
@@ -349,20 +425,24 @@ export default function StaffReceivingPage() {
         </div>
 
         <div className="dash-actions">
-          <StaffFilterDropdown
-            label="Session"
-            value={sessionFilter}
-            options={['All', 'Open', 'Closed']}
-            onChange={(val) => {
-              setSessionFilter(val);
-              const filtered = sessions.filter((s) =>
-                val === 'All' ? true : val === 'Open' ? s.status === 'OPEN' : s.status === 'CLOSED',
+          <HierarchicalFilterDropdown
+            categories={sessionFilterCategories}
+            selected={sessionFilters}
+            onChange={(next) => {
+              setSessionFilters(next);
+              const filtered = applyFiltersAndSort(
+                sessions,
+                next,
+                sessionFilterDefs,
+                null,
+                [],
               );
               if (filtered[0] && !filtered.some((s) => s.id === selectedSessionId)) {
                 setSelectedSessionId(filtered[0].id);
                 hydrateSessionItems(filtered[0]);
               }
             }}
+            label="Session"
           />
           {visibleSessions.length > 0 && (
             <div style={{ minWidth: 260, flex: '1 1 260px', maxWidth: 340 }}>
@@ -455,13 +535,27 @@ export default function StaffReceivingPage() {
         </span>
       </div>
 
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
+        <ActiveFilterChips
+          categories={itemFilterCategories}
+          selected={itemFilters}
+          onChange={setItemFilters}
+        />
+        <HierarchicalFilterDropdown
+          categories={itemFilterCategories}
+          selected={itemFilters}
+          onChange={setItemFilters}
+          label="Filter lines"
+        />
+      </div>
+
       <section className="acct-panel" style={{ padding: 0 }}>
         <div className="staff-table-head staff-rec-cols">
-          <span>ITEM</span>
-          <span>EXPECTED</span>
-          <span>ACTUAL RECEIVED</span>
-          <span>VARIANCE</span>
-          <span>INSPECTION</span>
+          <SortableHeader label="ITEM" sortKey="product" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="EXPECTED" sortKey="expected" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="ACTUAL RECEIVED" sortKey="received" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="VARIANCE" sortKey="variance" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="INSPECTION" sortKey="inspection" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
           <span>ACTIONS</span>
         </div>
 
@@ -485,18 +579,34 @@ export default function StaffReceivingPage() {
               </button>
             }
           />
-        ) : items.length === 0 ? (
-          <EmptyState
-            title="No manifest items on this shipment"
-            description="Add manifest items on the Shipments page before recording receiving lines."
-            action={
-              <Link href="/staff/shipments" className="button">
-                Go to Shipments
-              </Link>
-            }
-          />
+        ) : visibleItems.length === 0 ? (
+          items.length === 0 ? (
+            <EmptyState
+              title="No manifest items on this shipment"
+              description="Add manifest items on the Shipments page before recording receiving lines."
+              action={
+                <Link href="/staff/shipments" className="button">
+                  Go to Shipments
+                </Link>
+              }
+            />
+          ) : (
+            <EmptyState
+              title="No matching receiving lines"
+              description="No receiving lines match the selected line filters."
+              action={
+                <button
+                  type="button"
+                  className="button"
+                  onClick={() => setItemFilters({})}
+                >
+                  Clear filters
+                </button>
+              }
+            />
+          )
         ) : (
-          items.map((item) => {
+          visibleItems.map((item) => {
             const diff = item.received - item.expected;
             const varianceText =
               diff === 0

@@ -1,11 +1,44 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { StorageService } from '../../integrations/storage/storage.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import {
+  ALLOWED_UPLOAD_FOLDERS,
+  ALLOWED_UPLOAD_MIMETYPES,
+  UploadEvidenceDto,
+} from './dto/upload-evidence.dto';
+
+function matchesMagicBytes(buffer: Buffer, mimetype: string): boolean {
+  if (buffer.length < 12) return false;
+  switch (mimetype) {
+    case 'image/jpeg':
+      return buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+    case 'image/png':
+      return (
+        buffer[0] === 0x89 &&
+        buffer[1] === 0x50 &&
+        buffer[2] === 0x4e &&
+        buffer[3] === 0x47
+      );
+    case 'image/webp':
+      return (
+        buffer.subarray(0, 4).toString('ascii') === 'RIFF' &&
+        buffer.subarray(8, 12).toString('ascii') === 'WEBP'
+      );
+    case 'image/avif':
+      return buffer.subarray(4, 8).toString('ascii') === 'ftyp';
+    case 'application/pdf':
+      return buffer.subarray(0, 5).toString('ascii') === '%PDF-';
+    default:
+      return false;
+  }
+}
 
 @Injectable()
 export class GovernanceService {
+  private readonly logger = new Logger(GovernanceService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
@@ -257,16 +290,27 @@ export class GovernanceService {
   }
 
   // --- File Uploads & Signed URLs (StorageService) ---
-  async uploadEvidenceBase64(dto: { folder: string; filename: string; mimetype: string; base64: string }) {
-    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/avif', 'application/pdf'];
-    if (!allowed.includes(dto.mimetype)) {
+  async uploadEvidenceBase64(dto: UploadEvidenceDto) {
+    if (!(ALLOWED_UPLOAD_FOLDERS as readonly string[]).includes(dto.folder)) {
+      throw new BadRequestException(`Unsupported upload folder: ${dto.folder}`);
+    }
+    if (!(ALLOWED_UPLOAD_MIMETYPES as readonly string[]).includes(dto.mimetype)) {
       throw new BadRequestException(`Unsupported file type: ${dto.mimetype}`);
     }
-    const buffer = Buffer.from(dto.base64, 'base64');
+    const cleanBase64 = dto.base64.replace(/^data:[^;]+;base64,/, '');
+    const buffer = Buffer.from(cleanBase64, 'base64');
+    if (buffer.length === 0) {
+      throw new BadRequestException('Empty file payload');
+    }
     if (buffer.length > 5 * 1024 * 1024) {
       throw new BadRequestException('File exceeds 5MB limit');
     }
-    const path = `${dto.folder}/${Date.now()}-${dto.filename.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+    if (!matchesMagicBytes(buffer, dto.mimetype)) {
+      this.logger.warn(`[SECURITY] File upload magic-byte mismatch claimed=${dto.mimetype} name=${dto.filename}`);
+      throw new BadRequestException('File contents do not match declared file type');
+    }
+    const safeFilename = dto.filename.replace(/[/\\]/g, '_').replace(/\.\.+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '_');
+    const path = `${dto.folder}/${Date.now()}-${safeFilename}`;
     return this.storage.uploadFile(path, buffer, dto.mimetype);
   }
 

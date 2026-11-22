@@ -4,10 +4,23 @@ import {
   CreateReturnModal,
   ReviewReturnModal,
 } from '@/components/staff/returns/ReturnModals';
-import { StaffFilterDropdown } from '@/components/staff/StaffFilterDropdown';
+import {
+  ActiveFilterChips,
+  HierarchicalFilterDropdown,
+  SortableHeader,
+} from '@/components/staff/TableControls';
 import { ConfirmDialog, EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
 import { ordersApi, returnsApi } from '@/lib/api';
 import { downloadCsv, formatStatusLabel, shortRef } from '@/lib/staffUtils';
+import {
+  applyFiltersAndSort,
+  cycleSort,
+  deriveFilterCategories,
+  type FilterCategoryDef,
+  type FilterValueMap,
+  type SortColumnDef,
+  type SortState,
+} from '@/lib/tableUtils';
 import { useToast } from '@/providers/toast.provider';
 import {
   ChevronRight,
@@ -15,7 +28,7 @@ import {
   Plus,
   Search,
 } from 'lucide-react';
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 
 type ReturnOrderLine = {
   id: string;
@@ -50,7 +63,8 @@ export default function StaffReturnsPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('All');
+  const [filters, setFilters] = useState<FilterValueMap>({});
+  const [sort, setSort] = useState<SortState>(null);
   const [sourceFilter, setSourceFilter] = useState<'All' | 'Online' | 'Walk-in'>('All');
   const [modalMode, setModalMode] = useState<'create' | 'review' | null>(null);
   const [selected, setSelected] = useState<ReturnRow | null>(null);
@@ -158,17 +172,49 @@ export default function StaffReturnsPage() {
     loadData();
   }, [loadData]);
 
-  const visible = rows.filter((r) => {
-    if (statusFilter !== 'All' && r.status !== statusFilter) return false;
-    if (sourceFilter !== 'All' && r.source !== sourceFilter) return false;
-    if (!search.trim()) return true;
-    const q = search.toLowerCase();
-    return (
-      r.reference.toLowerCase().includes(q) ||
-      r.orderReference.toLowerCase().includes(q) ||
-      r.customer.toLowerCase().includes(q)
-    );
-  });
+  const filterDefs: FilterCategoryDef<ReturnRow>[] = useMemo(
+    () => [
+      { key: 'status', label: 'Status', accessor: (r) => r.status },
+      { key: 'disposition', label: 'Disposition', accessor: (r) => r.disposition },
+      { key: 'source', label: 'Channel', accessor: (r) => r.source },
+    ],
+    [],
+  );
+
+  const sortDefs: SortColumnDef<ReturnRow>[] = useMemo(
+    () => [
+      { key: 'reference', type: 'string', accessor: (r) => r.reference },
+      { key: 'customer', type: 'string', accessor: (r) => r.customer },
+      { key: 'reason', type: 'string', accessor: (r) => r.reason },
+      {
+        key: 'status',
+        type: 'status',
+        statusOrder: ['PENDING', 'REQUESTED', 'UNDER_REVIEW', 'APPROVED', 'COMPLETED', 'REJECTED'],
+        accessor: (r) => r.status,
+      },
+      { key: 'disposition', type: 'string', accessor: (r) => r.disposition },
+      { key: 'date', type: 'date', accessor: (r) => r.date },
+    ],
+    [],
+  );
+
+  const filterCategories = useMemo(() => deriveFilterCategories(rows, filterDefs), [rows, filterDefs]);
+
+  const visible = useMemo(() => {
+    const searched = rows.filter((r) => {
+      if (sourceFilter !== 'All' && r.source !== sourceFilter) return false;
+      if (!search.trim()) return true;
+      const q = search.toLowerCase();
+      return (
+        r.reference.toLowerCase().includes(q) ||
+        r.orderReference.toLowerCase().includes(q) ||
+        r.customer.toLowerCase().includes(q)
+      );
+    });
+    return applyFiltersAndSort(searched, filters, filterDefs, sort, sortDefs);
+  }, [rows, sourceFilter, search, filters, filterDefs, sort, sortDefs]);
+
+  const hasActiveFilters = Object.values(filters).some((vals) => vals && vals.length > 0);
 
   const handleCreate = async (e: FormEvent) => {
     e.preventDefault();
@@ -277,19 +323,10 @@ export default function StaffReturnsPage() {
           />
         </label>
 
-        <StaffFilterDropdown
-          label="Status"
-          value={statusFilter}
-          options={[
-            'All',
-            'PENDING',
-            'REQUESTED',
-            'UNDER_REVIEW',
-            'APPROVED',
-            'REJECTED',
-            'COMPLETED',
-          ]}
-          onChange={setStatusFilter}
+        <HierarchicalFilterDropdown
+          categories={filterCategories}
+          selected={filters}
+          onChange={setFilters}
         />
 
         <button
@@ -317,14 +354,20 @@ export default function StaffReturnsPage() {
         </button>
       </div>
 
+      <ActiveFilterChips
+        categories={filterCategories}
+        selected={filters}
+        onChange={setFilters}
+      />
+
       <section className="acct-panel" style={{ padding: 0 }}>
         <div className="staff-table-head staff-sales-cols">
-          <span>REFERENCE</span>
-          <span>CUSTOMER</span>
-          <span>REASON</span>
-          <span>STATUS</span>
-          <span>DISPOSITION</span>
-          <span>DATE</span>
+          <SortableHeader label="REFERENCE" sortKey="reference" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="CUSTOMER" sortKey="customer" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="REASON" sortKey="reason" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="STATUS" sortKey="status" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="DISPOSITION" sortKey="disposition" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="DATE" sortKey="date" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
           <span />
         </div>
 
@@ -338,6 +381,20 @@ export default function StaffReturnsPage() {
           <EmptyState
             title="No return requests found"
             description="No return records match your current search or filter."
+            action={
+              search || hasActiveFilters ? (
+                <button
+                  type="button"
+                  className="button"
+                  onClick={() => {
+                    setSearch('');
+                    setFilters({});
+                  }}
+                >
+                  Clear filters
+                </button>
+              ) : undefined
+            }
           />
         ) : (
           visible.map((r) => (

@@ -377,7 +377,7 @@ function StaffNotificationsContent() {
           )}
         </section>
       ) : (
-        <div className="dash-grid" style={{ maxWidth: '100%', minWidth: 0 }}>
+        <div className="dash-grid" style={{ gridTemplateColumns: '1fr', maxWidth: '100%', minWidth: 0 }}>
           <section className="acct-panel" style={{ minWidth: 0 }}>
             <div className="acct-panel-head">
               <div>
@@ -471,100 +471,6 @@ function StaffNotificationsContent() {
                   <div style={{ fontSize: 12, color: 'var(--muted)' }}>{inc.description}</div>
                 </div>
                 <span className="acct-pill amber">● {inc.status}</span>
-              </div>
-            ))}
-          </section>
-
-          <section className="acct-panel" style={{ gridColumn: '1 / -1' }}>
-            <div className="acct-panel-head">
-              <div>
-                <h2>Product polls</h2>
-                <p>Gauge customer demand before sourcing</p>
-              </div>
-            </div>
-            <form
-              onSubmit={async (e) => {
-                e.preventDefault();
-                if (!pollTitle.trim() || submitting) return;
-                setSubmitting(true);
-                try {
-                  await governanceApi.createPoll({
-                    title: pollTitle.trim(),
-                    description: pollDesc.trim() || undefined,
-                  });
-                  setPollTitle('');
-                  setPollDesc('');
-                  showToast('Product poll created', 'success');
-                  loadData(true);
-                } catch (err) {
-                  showToast(err instanceof Error ? err.message : 'Failed to create poll', 'error');
-                } finally {
-                  setSubmitting(false);
-                }
-              }}
-              style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}
-            >
-              <input
-                value={pollTitle}
-                onChange={(e) => setPollTitle(e.target.value)}
-                placeholder="Poll question (e.g. Should we source Dyson V15 vacuums?)"
-                required
-                style={{ flex: '2 1 240px', padding: '10px 12px', border: '0.8px solid var(--line)', borderRadius: 4 }}
-              />
-              <input
-                value={pollDesc}
-                onChange={(e) => setPollDesc(e.target.value)}
-                placeholder="Optional details / target price range"
-                style={{ flex: '2 1 200px', padding: '10px 12px', border: '0.8px solid var(--line)', borderRadius: 4 }}
-              />
-              <button type="submit" className="button primary" disabled={submitting}>
-                Create poll
-              </button>
-            </form>
-            {polls.map((poll) => (
-              <div
-                key={poll.id}
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  gap: 12,
-                  padding: '10px 0',
-                  borderTop: '0.8px solid var(--line)',
-                }}
-              >
-                <div>
-                  <strong style={{ fontSize: 13 }}>{poll.title}</strong>
-                  {poll.description && (
-                    <div style={{ fontSize: 12, color: 'var(--muted)' }}>{poll.description}</div>
-                  )}
-                  <small style={{ fontSize: 11, color: 'var(--muted)' }}>
-                    {poll.yesVotes ?? 0} Yes · {poll.noVotes ?? 0} No ({poll._count?.votes ?? 0} total)
-                  </small>
-                </div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <span className={`acct-pill ${poll.status === 'OPEN' ? 'green' : 'gray'}`}>
-                    {poll.status}
-                  </span>
-                  {poll.status === 'OPEN' && (
-                    <button
-                      type="button"
-                      className="button"
-                      style={{ minHeight: 32, padding: '0 10px', fontSize: 12 }}
-                      onClick={async () => {
-                        try {
-                          await governanceApi.closePoll(poll.id);
-                          showToast('Poll closed', 'info');
-                          loadData(true);
-                        } catch (err) {
-                          showToast(err instanceof Error ? err.message : 'Failed to close poll', 'error');
-                        }
-                      }}
-                    >
-                      Close
-                    </button>
-                  )}
-                </div>
               </div>
             ))}
           </section>

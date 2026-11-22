@@ -1,11 +1,24 @@
 'use client';
 
-import { StaffFilterDropdown } from '@/components/staff/StaffFilterDropdown';
+import {
+  ActiveFilterChips,
+  HierarchicalFilterDropdown,
+  SortableHeader,
+} from '@/components/staff/TableControls';
 import { EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
 import { adminApi } from '@/lib/api';
 import { downloadCsv } from '@/lib/staffUtils';
+import {
+  applyFiltersAndSort,
+  cycleSort,
+  deriveFilterCategories,
+  type FilterCategoryDef,
+  type FilterValueMap,
+  type SortColumnDef,
+  type SortState,
+} from '@/lib/tableUtils';
 import { Download, Search, X } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 type AuditRecord = {
   id: string;
@@ -25,7 +38,8 @@ export default function StaffAuditLogsPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
-  const [actorFilter, setActorFilter] = useState('All');
+  const [filters, setFilters] = useState<FilterValueMap>({});
+  const [sort, setSort] = useState<SortState>(null);
   const [selected, setSelected] = useState<AuditRecord | null>(null);
 
   const loadLogs = useCallback(async () => {
@@ -68,19 +82,43 @@ export default function StaffAuditLogsPage() {
     loadLogs();
   }, [loadLogs]);
 
-  const actorOptions = ['All', ...Array.from(new Set(logs.map((l) => l.actor)))];
+  const filterDefs: FilterCategoryDef<AuditRecord>[] = useMemo(
+    () => [
+      { key: 'actor', label: 'Actor', accessor: (r) => r.actor },
+      { key: 'action', label: 'Action', accessor: (r) => r.action },
+      { key: 'entity', label: 'Entity', accessor: (r) => r.entity },
+    ],
+    [],
+  );
 
-  const visible = logs.filter((row) => {
-    if (actorFilter !== 'All' && row.actor !== actorFilter) return false;
-    if (!search.trim()) return true;
-    const q = search.toLowerCase();
-    return (
-      row.actor.toLowerCase().includes(q) ||
-      row.action.toLowerCase().includes(q) ||
-      row.entity.toLowerCase().includes(q) ||
-      row.details.toLowerCase().includes(q)
-    );
-  });
+  const sortDefs: SortColumnDef<AuditRecord>[] = useMemo(
+    () => [
+      { key: 'actor', type: 'string', accessor: (r) => r.actor },
+      { key: 'action', type: 'string', accessor: (r) => r.action },
+      { key: 'entity', type: 'string', accessor: (r) => r.entity },
+      { key: 'details', type: 'string', accessor: (r) => r.details },
+      { key: 'timestamp', type: 'date', accessor: (r) => r.timestamp },
+    ],
+    [],
+  );
+
+  const filterCategories = useMemo(() => deriveFilterCategories(logs, filterDefs), [logs, filterDefs]);
+
+  const visible = useMemo(() => {
+    const searched = logs.filter((row) => {
+      if (!search.trim()) return true;
+      const q = search.toLowerCase();
+      return (
+        row.actor.toLowerCase().includes(q) ||
+        row.action.toLowerCase().includes(q) ||
+        row.entity.toLowerCase().includes(q) ||
+        row.details.toLowerCase().includes(q)
+      );
+    });
+    return applyFiltersAndSort(searched, filters, filterDefs, sort, sortDefs);
+  }, [logs, search, filters, filterDefs, sort, sortDefs]);
+
+  const hasActiveFilters = Object.values(filters).some((vals) => vals && vals.length > 0);
 
   return (
     <div data-node-id="7:28149">
@@ -106,11 +144,10 @@ export default function StaffAuditLogsPage() {
           />
         </label>
 
-        <StaffFilterDropdown
-          label="Actor"
-          value={actorFilter}
-          options={actorOptions}
-          onChange={setActorFilter}
+        <HierarchicalFilterDropdown
+          categories={filterCategories}
+          selected={filters}
+          onChange={setFilters}
         />
 
         <button
@@ -130,13 +167,19 @@ export default function StaffAuditLogsPage() {
         </button>
       </div>
 
+      <ActiveFilterChips
+        categories={filterCategories}
+        selected={filters}
+        onChange={setFilters}
+      />
+
       <section className="acct-panel" style={{ padding: 0 }}>
         <div className="staff-table-head staff-audit-cols">
-          <span>ACTOR</span>
-          <span>ACTION</span>
-          <span>ENTITY</span>
-          <span>DETAILS</span>
-          <span>TIME</span>
+          <SortableHeader label="ACTOR" sortKey="actor" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="ACTION" sortKey="action" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="ENTITY" sortKey="entity" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="DETAILS" sortKey="details" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="TIME" sortKey="timestamp" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
         </div>
 
         {loading ? (
@@ -148,7 +191,21 @@ export default function StaffAuditLogsPage() {
         ) : visible.length === 0 ? (
           <EmptyState
             title="No audit events found"
-            description="No audit log entries match your current search or actor filter."
+            description="No audit log entries match your current search or filters."
+            action={
+              search || hasActiveFilters ? (
+                <button
+                  type="button"
+                  className="button"
+                  onClick={() => {
+                    setSearch('');
+                    setFilters({});
+                  }}
+                >
+                  Clear filters
+                </button>
+              ) : undefined
+            }
           />
         ) : (
           visible.map((row) => (

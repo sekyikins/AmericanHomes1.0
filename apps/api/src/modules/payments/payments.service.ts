@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -15,6 +16,8 @@ import { ManualPaymentDto } from './dto/manual-payment.dto';
 
 @Injectable()
 export class PaymentsService {
+  private readonly logger = new Logger(PaymentsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly paystack: PaystackService,
@@ -104,6 +107,16 @@ export class PaymentsService {
         where: { reference },
       });
       if (existingPayment) {
+        if (
+          !verification.isStub &&
+          (verification.amountPesewas < existingPayment.amountCents ||
+            verification.currency.toUpperCase() !== 'GHS')
+        ) {
+          this.logger.warn(
+            `[SECURITY] Paystack amount/currency mismatch ref=${reference} expected=${existingPayment.amountCents} got=${verification.amountPesewas} ${verification.currency}`,
+          );
+          throw new BadRequestException('Verified payment amount or currency does not match order');
+        }
         const settlement = await this.settleVerifiedPayment(existingPayment, reference);
         return { ...verification, ...settlement };
       }
@@ -305,10 +318,14 @@ export class PaymentsService {
   async handleWebhook(payload: unknown, signature: string) {
     const raw = typeof payload === 'string' ? payload : JSON.stringify(payload ?? {});
     if (!this.paystack.verifyWebhookSignature(raw, signature)) {
+      this.logger.warn('[SECURITY] Rejected Paystack webhook with invalid signature');
       throw new UnauthorizedException('Invalid Paystack webhook signature');
     }
 
-    const event = payload as { event?: string; data?: { reference?: string } };
+    const event = payload as {
+      event?: string;
+      data?: { reference?: string; amount?: number; currency?: string };
+    };
     const reference = event?.data?.reference;
     if (!reference) {
       return { ok: true, ignored: true };
@@ -325,6 +342,15 @@ export class PaymentsService {
     }
 
     if (event.event === 'charge.success') {
+      if (
+        typeof event.data?.amount === 'number' &&
+        event.data.amount < existingPayment.amountCents
+      ) {
+        this.logger.warn(
+          `[SECURITY] Paystack webhook underpayment ref=${reference} expected=${existingPayment.amountCents} got=${event.data.amount}`,
+        );
+        throw new BadRequestException('Webhook payment amount is less than expected');
+      }
       const result = await this.settleVerifiedPayment(existingPayment, reference);
       return { ok: true, ...result };
     }

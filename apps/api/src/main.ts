@@ -1,5 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
@@ -20,14 +21,26 @@ async function bootstrap() {
   }
 
   const app = await NestFactory.create(AppModule);
-  const httpAdapter = app.getHttpAdapter().getInstance() as { disable?: (setting: string) => void };
+  const httpAdapter = app.getHttpAdapter().getInstance() as {
+    disable?: (setting: string) => void;
+    set?: (setting: string, val: unknown) => void;
+  };
   httpAdapter.disable?.('x-powered-by');
+  httpAdapter.set?.('trust proxy', 1);
+
+  app.use(json({ limit: '8mb' }));
+  app.use(urlencoded({ extended: true, limit: '8mb' }));
 
   const origins = (process.env.CORS_ORIGINS ?? 'http://localhost:3000')
     .split(',')
     .map((o) => o.trim())
     .filter(Boolean);
-  app.enableCors({ origin: origins, credentials: true });
+  app.enableCors({
+    origin: origins,
+    credentials: true,
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'X-Requested-With'],
+  });
   app.setGlobalPrefix('api');
   app.useGlobalPipes(createGlobalValidationPipe());
   app.useGlobalFilters(new HttpExceptionFilter());

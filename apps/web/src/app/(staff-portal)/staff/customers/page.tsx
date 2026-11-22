@@ -1,16 +1,29 @@
 'use client';
 
-import { StaffFilterDropdown } from '@/components/staff/StaffFilterDropdown';
+import {
+  ActiveFilterChips,
+  HierarchicalFilterDropdown,
+  SortableHeader,
+} from '@/components/staff/TableControls';
 import { EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
 import { adminApi } from '@/lib/api';
 import { downloadCsv } from '@/lib/staffUtils';
+import {
+  applyFiltersAndSort,
+  cycleSort,
+  deriveFilterCategories,
+  type FilterCategoryDef,
+  type FilterValueMap,
+  type SortColumnDef,
+  type SortState,
+} from '@/lib/tableUtils';
 import {
   ChevronRight,
   Download,
   Search,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 type CustomerRecord = {
   id: string;
@@ -29,7 +42,8 @@ export default function StaffCustomersPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
-  const [consentFilter, setConsentFilter] = useState<'All' | 'WhatsApp on' | 'Opted out'>('All');
+  const [filters, setFilters] = useState<FilterValueMap>({});
+  const [sort, setSort] = useState<SortState>(null);
   const [selected, setSelected] = useState<CustomerRecord | null>(null);
 
   const loadCustomers = useCallback(async () => {
@@ -73,21 +87,40 @@ export default function StaffCustomersPage() {
     loadCustomers();
   }, [loadCustomers]);
 
-  const visible = customers.filter((c) => {
-    if (
-      consentFilter !== 'All' &&
-      c.consentSummary.toLowerCase() !== consentFilter.toLowerCase()
-    ) {
-      return false;
-    }
-    if (!search.trim()) return true;
-    const q = search.toLowerCase();
-    return (
-      c.name.toLowerCase().includes(q) ||
-      c.phone.toLowerCase().includes(q) ||
-      c.email.toLowerCase().includes(q)
-    );
-  });
+  const filterDefs: FilterCategoryDef<CustomerRecord>[] = useMemo(
+    () => [
+      { key: 'consent', label: 'Consent', accessor: (c) => c.consentSummary },
+      { key: 'activity', label: 'Activity', accessor: (c) => c.activityLabel },
+    ],
+    [],
+  );
+
+  const sortDefs: SortColumnDef<CustomerRecord>[] = useMemo(
+    () => [
+      { key: 'name', type: 'string', accessor: (c) => c.name },
+      { key: 'email', type: 'string', accessor: (c) => c.email },
+      { key: 'consentSummary', type: 'string', accessor: (c) => c.consentSummary },
+      { key: 'activityLabel', type: 'string', accessor: (c) => c.activityLabel },
+    ],
+    [],
+  );
+
+  const filterCategories = useMemo(() => deriveFilterCategories(customers, filterDefs), [customers, filterDefs]);
+
+  const visible = useMemo(() => {
+    const searched = customers.filter((c) => {
+      if (!search.trim()) return true;
+      const q = search.toLowerCase();
+      return (
+        c.name.toLowerCase().includes(q) ||
+        c.phone.toLowerCase().includes(q) ||
+        c.email.toLowerCase().includes(q)
+      );
+    });
+    return applyFiltersAndSort(searched, filters, filterDefs, sort, sortDefs);
+  }, [customers, search, filters, filterDefs, sort, sortDefs]);
+
+  const hasActiveFilters = Object.values(filters).some((vals) => vals && vals.length > 0);
 
   return (
     <div data-node-id="26:65245">
@@ -113,11 +146,10 @@ export default function StaffCustomersPage() {
           />
         </label>
 
-        <StaffFilterDropdown
-          label="Consent"
-          value={consentFilter}
-          options={['All', 'WhatsApp on', 'Opted out']}
-          onChange={(v) => setConsentFilter(v as typeof consentFilter)}
+        <HierarchicalFilterDropdown
+          categories={filterCategories}
+          selected={filters}
+          onChange={setFilters}
         />
 
         <button
@@ -144,12 +176,18 @@ export default function StaffCustomersPage() {
         </button>
       </div>
 
+      <ActiveFilterChips
+        categories={filterCategories}
+        selected={filters}
+        onChange={setFilters}
+      />
+
       <section className="acct-panel" style={{ padding: 0 }}>
         <div className="staff-table-head staff-perm-cols">
-          <span>CUSTOMER</span>
-          <span>EMAIL</span>
-          <span>CONSENT</span>
-          <span>ACTIVITY</span>
+          <SortableHeader label="CUSTOMER" sortKey="name" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="EMAIL" sortKey="email" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="CONSENT" sortKey="consentSummary" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="ACTIVITY" sortKey="activityLabel" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
           <span />
         </div>
 
@@ -164,13 +202,13 @@ export default function StaffCustomersPage() {
             title="No customers found"
             description="No customer accounts match your current search or filter."
             action={
-              search || consentFilter !== 'All' ? (
+              search || hasActiveFilters ? (
                 <button
                   type="button"
                   className="button"
                   onClick={() => {
                     setSearch('');
-                    setConsentFilter('All');
+                    setFilters({});
                   }}
                 >
                   Clear filters

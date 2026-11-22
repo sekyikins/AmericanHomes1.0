@@ -4,10 +4,23 @@ import {
   CreateReservationModal,
   ReviewReservationModal,
 } from '@/components/staff/reservations/ReservationModals';
-import { StaffFilterDropdown } from '@/components/staff/StaffFilterDropdown';
+import {
+  ActiveFilterChips,
+  HierarchicalFilterDropdown,
+  SortableHeader,
+} from '@/components/staff/TableControls';
 import { ConfirmDialog, EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
 import { catalogueApi, reservationsApi } from '@/lib/api';
 import { downloadCsv, formatStatusLabel } from '@/lib/staffUtils';
+import {
+  applyFiltersAndSort,
+  cycleSort,
+  deriveFilterCategories,
+  type FilterCategoryDef,
+  type FilterValueMap,
+  type SortColumnDef,
+  type SortState,
+} from '@/lib/tableUtils';
 import { useToast } from '@/providers/toast.provider';
 import {
   ChevronRight,
@@ -15,7 +28,7 @@ import {
   Plus,
   Search,
 } from 'lucide-react';
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 
 type ReservationRow = {
   id: string;
@@ -42,7 +55,8 @@ export default function StaffReservationsPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('All');
+  const [filters, setFilters] = useState<FilterValueMap>({});
+  const [sort, setSort] = useState<SortState>(null);
   const [sourceFilter, setSourceFilter] = useState<'All' | 'Online' | 'Walk-in'>('All');
   const [modalMode, setModalMode] = useState<'create' | 'review' | null>(null);
   const [selected, setSelected] = useState<ReservationRow | null>(null);
@@ -124,17 +138,48 @@ export default function StaffReservationsPage() {
     loadData();
   }, [loadData]);
 
-  const visible = rows.filter((r) => {
-    if (statusFilter !== 'All' && r.status !== statusFilter) return false;
-    if (sourceFilter !== 'All' && r.source !== sourceFilter) return false;
-    if (!search.trim()) return true;
-    const q = search.toLowerCase();
-    return (
-      r.reference.toLowerCase().includes(q) ||
-      r.customer.toLowerCase().includes(q) ||
-      r.product.toLowerCase().includes(q)
-    );
-  });
+  const filterDefs: FilterCategoryDef<ReservationRow>[] = useMemo(
+    () => [
+      { key: 'status', label: 'Status', accessor: (r) => r.status },
+      { key: 'source', label: 'Channel', accessor: (r) => r.source },
+    ],
+    [],
+  );
+
+  const sortDefs: SortColumnDef<ReservationRow>[] = useMemo(
+    () => [
+      { key: 'reference', type: 'string', accessor: (r) => r.reference },
+      { key: 'customer', type: 'string', accessor: (r) => r.customer },
+      { key: 'requestedQty', type: 'number', accessor: (r) => r.requestedQty },
+      {
+        key: 'status',
+        type: 'status',
+        statusOrder: ['PENDING', 'APPROVED', 'ACTIVE', 'FULFILLED', 'EXPIRED', 'CANCELLED'],
+        accessor: (r) => r.status,
+      },
+      { key: 'holdExpires', type: 'date', accessor: (r) => r.holdExpires },
+      { key: 'date', type: 'date', accessor: (r) => r.date },
+    ],
+    [],
+  );
+
+  const filterCategories = useMemo(() => deriveFilterCategories(rows, filterDefs), [rows, filterDefs]);
+
+  const visible = useMemo(() => {
+    const searched = rows.filter((r) => {
+      if (sourceFilter !== 'All' && r.source !== sourceFilter) return false;
+      if (!search.trim()) return true;
+      const q = search.toLowerCase();
+      return (
+        r.reference.toLowerCase().includes(q) ||
+        r.customer.toLowerCase().includes(q) ||
+        r.product.toLowerCase().includes(q)
+      );
+    });
+    return applyFiltersAndSort(searched, filters, filterDefs, sort, sortDefs);
+  }, [rows, sourceFilter, search, filters, filterDefs, sort, sortDefs]);
+
+  const hasActiveFilters = Object.values(filters).some((vals) => vals && vals.length > 0);
 
   const handleCreate = async (e: FormEvent) => {
     e.preventDefault();
@@ -247,11 +292,10 @@ export default function StaffReservationsPage() {
           />
         </label>
 
-        <StaffFilterDropdown
-          label="Status"
-          value={statusFilter}
-          options={['All', 'PENDING', 'APPROVED', 'ACTIVE', 'EXPIRED', 'CANCELLED', 'FULFILLED']}
-          onChange={setStatusFilter}
+        <HierarchicalFilterDropdown
+          categories={filterCategories}
+          selected={filters}
+          onChange={setFilters}
         />
 
         <button
@@ -279,14 +323,20 @@ export default function StaffReservationsPage() {
         </button>
       </div>
 
+      <ActiveFilterChips
+        categories={filterCategories}
+        selected={filters}
+        onChange={setFilters}
+      />
+
       <section className="acct-panel" style={{ padding: 0 }}>
         <div className="staff-table-head staff-sales-cols">
-          <span>REFERENCE</span>
-          <span>CUSTOMER</span>
-          <span>AMOUNT / QTY</span>
-          <span>STATUS</span>
-          <span>HOLD EXPIRES</span>
-          <span>DATE</span>
+          <SortableHeader label="REFERENCE" sortKey="reference" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="CUSTOMER" sortKey="customer" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="AMOUNT / QTY" sortKey="requestedQty" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="STATUS" sortKey="status" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="HOLD EXPIRES" sortKey="holdExpires" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="DATE" sortKey="date" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
           <span />
         </div>
 
@@ -301,13 +351,13 @@ export default function StaffReservationsPage() {
             title="No reservations found"
             description="No reservations match your current search or filter."
             action={
-              search || statusFilter !== 'All' ? (
+              search || hasActiveFilters ? (
                 <button
                   type="button"
                   className="button"
                   onClick={() => {
                     setSearch('');
-                    setStatusFilter('All');
+                    setFilters({});
                   }}
                 >
                   Clear filters
