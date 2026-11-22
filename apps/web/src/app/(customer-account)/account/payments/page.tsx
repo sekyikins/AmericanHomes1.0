@@ -2,13 +2,17 @@
 
 import { ArrowLeft, CheckCircle2, Clock } from 'lucide-react';
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { Suspense, useCallback, useEffect, useState } from 'react';
 import { EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
-import { ordersApi } from '@/lib/api';
+import { ordersApi, paymentsApi } from '@/lib/api';
 import { mapCustomerOrders, type CustomerPaymentItem } from '@/lib/customerAccount';
 import { formatGHS } from '@/lib/formatting/currency';
+import { useToast } from '@/providers/toast.provider';
 
-export default function PaymentsPage() {
+function PaymentsContent() {
+  const searchParams = useSearchParams();
+  const { showToast } = useToast();
   const [payments, setPayments] = useState<CustomerPaymentItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -17,6 +21,11 @@ export default function PaymentsPage() {
     setLoading(true);
     setError(null);
     try {
+      const ref = searchParams.get('reference') ?? searchParams.get('trxref');
+      if (ref) {
+        await paymentsApi.verify(ref).catch(() => null);
+        showToast(`Payment ${ref} verified`, 'success');
+      }
       const orders = mapCustomerOrders(await ordersApi.getMy());
       setPayments(orders.flatMap((o) => o.payments));
     } catch (err) {
@@ -24,7 +33,7 @@ export default function PaymentsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [searchParams, showToast]);
 
   useEffect(() => {
     loadPayments();
@@ -101,5 +110,13 @@ export default function PaymentsPage() {
         )}
       </section>
     </main>
+  );
+}
+
+export default function PaymentsPage() {
+  return (
+    <Suspense fallback={<main className="acct-shell"><TableSkeleton rows={4} /></main>}>
+      <PaymentsContent />
+    </Suspense>
   );
 }

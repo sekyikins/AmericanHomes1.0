@@ -3,7 +3,16 @@ const CUSTOMER_META_KEY = 'ah_user_meta';
 const STAFF_TOKEN_KEY = 'ah_staff_token';
 const STAFF_META_KEY = 'ah_staff_meta';
 
-export type SessionUserMeta = { name?: string; phone?: string };
+export type SessionUserMeta = {
+  id?: string;
+  name?: string;
+  phone?: string;
+  email?: string | null;
+  role?: 'CUSTOMER' | 'STAFF';
+  isOwner?: boolean;
+  restrictFinancials?: boolean;
+  permissions?: string[];
+};
 
 function readSession(tokenKey: string, metaKey: string): { token: string; meta?: SessionUserMeta } | null {
   if (typeof window === 'undefined') return null;

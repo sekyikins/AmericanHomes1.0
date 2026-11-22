@@ -1,7 +1,7 @@
 'use client';
 
 import { StaffModal } from '@/components/staff/StaffModal';
-import { Button } from '@/components/ui';
+import { Button, SearchableSelect } from '@/components/ui';
 import { formatStatusLabel } from '@/lib/staffUtils';
 import { ArrowRight, Clock, Info, ShieldCheck } from 'lucide-react';
 import type { FormEvent } from 'react';
@@ -62,20 +62,20 @@ export function CreateReservationModal({
             placeholder="e.g. Ama Mensah (+233 24 000 0000)"
           />
         </label>
-        <label className="login-field">
+        <div className="login-field">
           <span>Product variant</span>
-          <select
-            className="staff-field-select"
+          <SearchableSelect
+            options={variants.map((v) => ({
+              value: v.id,
+              label: v.label,
+              searchText: v.label,
+            }))}
             value={newVariantId}
-            onChange={(e) => onVariantChange(e.target.value)}
-          >
-            {variants.map((v) => (
-              <option key={v.id} value={v.id}>
-                {v.label}
-              </option>
-            ))}
-          </select>
-        </label>
+            onChange={onVariantChange}
+            placeholder="Search product variant…"
+            searchPlaceholder="Type product name or SKU…"
+          />
+        </div>
         <label className="login-field">
           <span>Quantity</span>
           <input

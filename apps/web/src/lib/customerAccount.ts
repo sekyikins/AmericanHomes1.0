@@ -22,6 +22,13 @@ export type CustomerCollectionItem = {
   date: string;
 };
 
+export type CustomerOrderLine = {
+  variantId: string;
+  name: string;
+  quantity: number;
+  unitPriceCents: number;
+};
+
 export type CustomerOrderRecord = {
   id: string;
   reference: string;
@@ -32,8 +39,9 @@ export type CustomerOrderRecord = {
   totalPesewas: number;
   paidPesewas: number;
   paymentStatus: 'Part paid' | 'Paid' | 'Pending';
-  collectionStatus: 'Ready for collection' | 'Collected' | 'Cancelled';
+  collectionStatus: 'Awaiting payment' | 'Preparing' | 'Ready for collection' | 'Collected' | 'Cancelled';
   collectionNote: string;
+  lines: CustomerOrderLine[];
   payments: CustomerPaymentItem[];
   collections: CustomerCollectionItem[];
 };
@@ -90,8 +98,14 @@ export function mapCustomerOrders(rawOrders: unknown): CustomerOrderRecord[] {
     const reference = shortRef(String(o.reference || id), 'ORD');
     const lines = Array.isArray(o.lines)
       ? (o.lines as Array<{
+          variantId?: string;
           quantity?: number;
-          variant?: { product?: { id?: string; name?: string; media?: Array<{ url?: string }> } };
+          unitPriceCents?: number;
+          variant?: {
+            name?: string;
+            sku?: string;
+            product?: { id?: string; name?: string; media?: Array<{ url?: string }> };
+          };
         }>)
       : [];
     const firstProduct = lines[0]?.variant?.product;
@@ -123,7 +137,11 @@ export function mapCustomerOrders(rawOrders: unknown): CustomerOrderRecord[] {
         ? 'Cancelled'
         : colRaw === 'COLLECTED' || colRaw === 'COMPLETED'
           ? 'Collected'
-          : 'Ready for collection';
+          : paymentStatus === 'Pending'
+            ? 'Awaiting payment'
+            : colRaw === 'READY_FOR_COLLECTION' || colRaw === 'PARTIALLY_COLLECTED'
+              ? 'Ready for collection'
+              : 'Preparing';
 
     const payments: CustomerPaymentItem[] = rawPayments.map((p) => {
       const pStatus = String(p.status ?? 'PENDING').toUpperCase();
@@ -155,6 +173,16 @@ export function mapCustomerOrders(rawOrders: unknown): CustomerOrderRecord[] {
           ]
         : [];
 
+    const mappedLines: CustomerOrderLine[] = lines.map((l) => {
+      const v = l.variant as { name?: string; sku?: string; product?: { name?: string } } | undefined;
+      return {
+        variantId: String(l.variantId ?? ''),
+        name: v?.product?.name ? `${v.product.name}${v.name ? ` (${v.name})` : ''}` : v?.sku || 'Item',
+        quantity: Number(l.quantity ?? 1),
+        unitPriceCents: Number(l.unitPriceCents ?? 0),
+      };
+    });
+
     return {
       id,
       reference,
@@ -171,7 +199,12 @@ export function mapCustomerOrders(rawOrders: unknown): CustomerOrderRecord[] {
           ? collections[0]?.date ?? 'Collected from Community 25 Warehouse, Tema.'
           : collectionStatus === 'Cancelled'
             ? 'Order cancelled; stock commitment released.'
-            : 'Ready at Community 25 Warehouse, Tema (Mon–Sat, 9am–6pm).',
+            : collectionStatus === 'Awaiting payment'
+              ? 'Complete payment before warehouse collection is prepared.'
+              : collectionStatus === 'Preparing'
+                ? 'Payment received; warehouse team is preparing your order for collection.'
+                : 'Ready at Community 25 Warehouse, Tema (Mon–Sat, 9am–6pm).',
+      lines: mappedLines,
       payments,
       collections,
     };

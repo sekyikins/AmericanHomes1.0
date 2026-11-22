@@ -131,6 +131,16 @@ export default function AccountOverviewPage() {
                 <span>{unreadCount === 1 ? 'Unread update' : 'Unread updates'}</span>
               </div>
             </Link>
+
+            <Link href="/account/polls" className="acct-stat-card">
+              <span className="acct-stat-icon">
+                <FileText size={17} />
+              </span>
+              <div>
+                <strong>Polls</strong>
+                <span>Vote on upcoming stock</span>
+              </div>
+            </Link>
           </section>
 
           <div className="acct-main-grid">
@@ -194,21 +204,21 @@ export default function AccountOverviewPage() {
                       <div className="acct-order-pay" style={{ justifyContent: 'center' }}>
                         {outstanding > 0 ? (
                           <>
-                            <div className="acct-pay-line">
+                            <div className="acct-pay-line" style={{ gap: 12, whiteSpace: 'nowrap' }}>
                               <span>Amount paid</span>
                               <strong>{formatGHS(order.paidPesewas)}</strong>
                             </div>
                             <div className="acct-progress">
                               <div className="acct-progress-bar" style={{ width: `${pct}%` }} />
                             </div>
-                            <div className="acct-pay-line">
+                            <div className="acct-pay-line" style={{ gap: 12, whiteSpace: 'nowrap' }}>
                               <span>Outstanding</span>
                               <strong>{formatGHS(outstanding)}</strong>
                             </div>
                             <Link
                               href="/account/orders"
                               className="button primary"
-                              style={{ width: '100%', minHeight: 38, marginTop: 10 }}
+                              style={{ width: '100%', minWidth: 118, minHeight: 38, marginTop: 10, whiteSpace: 'nowrap' }}
                             >
                               View order
                             </Link>

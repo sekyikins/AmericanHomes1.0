@@ -33,9 +33,36 @@ export class PaymentsService {
     });
   }
 
-  async initializePayment(dto: InitializePaymentDto, userId?: string) {
-    const order = await this.prisma.salesOrder.findUnique({ where: { id: dto.orderId } });
+  async initializePayment(dto: InitializePaymentDto, userId?: string, userRole?: string) {
+    const order = await this.prisma.salesOrder.findUnique({
+      where: { id: dto.orderId },
+      include: { customer: true, payments: true },
+    });
     if (!order) throw new NotFoundException(`SalesOrder ${dto.orderId} not found`);
+
+    if (userRole !== 'STAFF' && order.customer?.userId !== userId) {
+      throw new ForbiddenException('You are not authorized to initialize payment for this order');
+    }
+    if (order.orderStatus === 'CANCELLED') {
+      throw new BadRequestException('Cannot initialize payment for a cancelled order');
+    }
+
+    const verifiedPaidCents = order.payments
+      .filter((p) => p.status === 'VERIFIED')
+      .reduce((s, p) => s + p.amountCents, 0);
+    const remainingCents = Math.max(0, order.totalCents - verifiedPaidCents);
+    if (remainingCents <= 0) {
+      throw new BadRequestException('Order is already paid in full');
+    }
+    if (!Number.isInteger(dto.amountCents) || dto.amountCents <= 0) {
+      throw new BadRequestException('Payment amount must be a positive integer');
+    }
+    if (userRole !== 'STAFF' && dto.amountCents !== remainingCents) {
+      throw new BadRequestException(`Online payment must match remaining balance (${remainingCents} cents)`);
+    }
+    if (dto.amountCents > remainingCents) {
+      throw new BadRequestException(`Payment amount exceeds remaining balance (${remainingCents} cents)`);
+    }
 
     const user = userId
       ? await this.prisma.user.findUnique({ where: { id: userId } })
@@ -115,12 +142,23 @@ export class PaymentsService {
       );
     }
 
+    if (
+      (dto.method === 'MOBILE_MONEY' || dto.method === 'BANK_TRANSFER') &&
+      !dto.reference?.trim()
+    ) {
+      throw new BadRequestException(
+        dto.method === 'MOBILE_MONEY'
+          ? 'Transaction ID is required for Mobile Money payments.'
+          : 'Bank reference is required for Bank Transfer payments.',
+      );
+    }
+
     const payment = await this.prisma.payment.create({
       data: {
         orderId: dto.orderId,
         amountCents: dto.amountCents,
         method: dto.method,
-        reference: dto.reference,
+        reference: dto.method === 'CASH' ? null : dto.reference?.trim() || undefined,
         payerName: dto.payerName,
         payerPhone: dto.payerPhone,
         evidenceUrl: dto.evidenceUrl,
@@ -219,6 +257,16 @@ export class PaymentsService {
     if (!payment) {
       throw new NotFoundException(`Payment ${paymentId} not found`);
     }
+    let providerRefundStatus: string | undefined;
+    if (payment.method.startsWith('PAYSTACK') && payment.reference) {
+      try {
+        const refundRes = await this.paystack.createRefund(payment.reference, payment.amountCents);
+        providerRefundStatus = refundRes.status;
+      } catch {
+        providerRefundStatus = 'error';
+      }
+    }
+
     const updated = await this.prisma.payment.update({
       where: { id: paymentId },
       data: { status: 'REFUNDED' },
@@ -228,7 +276,7 @@ export class PaymentsService {
         paymentId,
         amountCents: payment.amountCents,
         reason,
-        status: 'PROCESSED',
+        status: providerRefundStatus === 'failed' ? 'FAILED' : 'PROCESSED',
         processedAt: new Date(),
       },
     });

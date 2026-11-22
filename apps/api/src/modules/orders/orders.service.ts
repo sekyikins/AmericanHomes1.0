@@ -8,6 +8,9 @@ import { WalkInOrderDto } from './dto/walk-in-order.dto';
 
 @Injectable()
 export class OrdersService {
+  private readonly listCache = new Map<string, { expiresAt: number; data: unknown }>();
+  private static readonly LIST_CACHE_TTL_MS = 15_000;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly inventory: InventoryService,
@@ -15,16 +18,73 @@ export class OrdersService {
     private readonly notifications: NotificationsService,
   ) {}
 
-  findAll(query: PaginationDto) {
-    return this.prisma.salesOrder.findMany({
-      ...paginationParams(query),
-      include: {
-        customer: { include: { user: true } },
-        lines: { include: { variant: { include: { product: true } } } },
-        payments: true,
+  private invalidateListCache() {
+    this.listCache.clear();
+  }
+
+  async findAll(query: PaginationDto) {
+    const { skip, take } = paginationParams(query);
+    const cacheKey = `${skip}:${take}`;
+    const cached = this.listCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.data;
+    }
+    const data = await this.prisma.salesOrder.findMany({
+      skip,
+      take,
+      select: {
+        id: true,
+        reference: true,
+        customerId: true,
+        source: true,
+        status: true,
+        orderStatus: true,
+        paymentStatus: true,
+        fulfilmentStatus: true,
+        totalCents: true,
+        notes: true,
+        createdAt: true,
+        updatedAt: true,
+        customer: {
+          select: {
+            id: true,
+            user: { select: { id: true, name: true, phone: true } },
+          },
+        },
+        lines: {
+          select: {
+            id: true,
+            variantId: true,
+            quantity: true,
+            unitPriceCents: true,
+            variant: {
+              select: {
+                id: true,
+                sku: true,
+                name: true,
+                product: { select: { id: true, name: true } },
+              },
+            },
+          },
+        },
+        payments: {
+          select: {
+            id: true,
+            amountCents: true,
+            method: true,
+            status: true,
+            reference: true,
+            createdAt: true,
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
+    this.listCache.set(cacheKey, {
+      expiresAt: Date.now() + OrdersService.LIST_CACHE_TTL_MS,
+      data,
+    });
+    return data;
   }
 
   async findById(id: string) {
@@ -38,6 +98,7 @@ export class OrdersService {
       },
     });
     if (!order) throw new NotFoundException(`Order ${id} not found`);
+    this.invalidateListCache();
     return order;
   }
 
@@ -82,6 +143,9 @@ export class OrdersService {
     const orderLines: Array<{ variantId: string; quantity: number; unitPriceCents: number }> = [];
 
     for (const item of dto.items) {
+      if (!Number.isInteger(item.quantity) || item.quantity < 1) {
+        throw new BadRequestException('Checkout item quantity must be a positive integer');
+      }
       const v = variantMap.get(item.variantId);
       if (!v) throw new NotFoundException(`Variant ${item.variantId} not found`);
       if (!v.product.isPublished) {
@@ -102,45 +166,50 @@ export class OrdersService {
     const holdMinutes = holdSetting && Number(holdSetting.value) > 0 ? Number(holdSetting.value) : 15;
     const expiresAt = new Date(Date.now() + holdMinutes * 60 * 1000);
 
-    const order = await this.prisma.salesOrder.create({
-      data: {
-        customerId: profile.id,
-        source: 'ONLINE',
-        status: 'PLACED',
-        orderStatus: 'PLACED',
-        paymentStatus: 'PENDING',
-        fulfilmentStatus: 'NOT_STARTED',
-        disclosedDefectsAcknowledged: Boolean(dto.disclosedDefectsAcknowledged),
-        totalCents,
-        notes: dto.notes,
-        lines: { create: orderLines },
-      },
-      include: { lines: true },
-    });
-
-    let lastHoldId: string | undefined;
-    for (const line of order.lines) {
-      const hold = await this.inventory.commitStock(
-        {
-          variantId: line.variantId,
-          quantity: line.quantity,
-          reason: 'CHECKOUT_HOLD',
-          referenceType: 'CHECKOUT_ORDER',
-          referenceId: order.id,
+    const { order, session } = await this.prisma.$transaction(async (tx) => {
+      const createdOrder = await tx.salesOrder.create({
+        data: {
+          customerId: profile.id,
+          source: 'ONLINE',
+          status: 'PLACED',
+          orderStatus: 'PLACED',
+          paymentStatus: 'PENDING',
+          fulfilmentStatus: 'NOT_STARTED',
+          disclosedDefectsAcknowledged: Boolean(dto.disclosedDefectsAcknowledged),
+          totalCents,
+          notes: dto.notes,
+          lines: { create: orderLines },
         },
-        userId,
-      );
-      lastHoldId = hold.id;
-    }
+        include: { lines: true },
+      });
 
-    const session = await this.prisma.checkoutSession.create({
-      data: {
-        customerId: profile.id,
-        orderId: order.id,
-        holdId: lastHoldId,
-        status: 'ACTIVE',
-        expiresAt,
-      },
+      let lastHoldId: string | undefined;
+      for (const line of createdOrder.lines) {
+        const hold = await this.inventory.commitStock(
+          {
+            variantId: line.variantId,
+            quantity: line.quantity,
+            reason: 'CHECKOUT_HOLD',
+            referenceType: 'CHECKOUT_ORDER',
+            referenceId: createdOrder.id,
+          },
+          userId,
+          tx,
+        );
+        lastHoldId = hold.id;
+      }
+
+      const createdSession = await tx.checkoutSession.create({
+        data: {
+          customerId: profile.id,
+          orderId: createdOrder.id,
+          holdId: lastHoldId,
+          status: 'ACTIVE',
+          expiresAt,
+        },
+      });
+
+      return { order: createdOrder, session: createdSession };
     });
 
     await this.notifications.notifyCustomerByProfileId(
@@ -155,6 +224,7 @@ export class OrdersService {
       'ORDERS',
     );
 
+    this.invalidateListCache();
     return { order, checkoutSession: session };
   }
 
@@ -172,32 +242,36 @@ export class OrdersService {
       (sum, line) => sum + line.quantity * line.unitPriceCents,
       0,
     );
-    const order = await this.prisma.salesOrder.create({
-      data: {
-        customerId: customerProfileId,
-        source: 'WALK_IN',
-        status: 'CONFIRMED',
-        orderStatus: 'CONFIRMED',
-        paymentStatus: 'PENDING',
-        fulfilmentStatus: 'NOT_STARTED',
-        totalCents,
-        notes: dto.notes,
-        lines: { create: dto.lines },
-      },
-      include: { lines: true },
-    });
-    for (const line of order.lines) {
-      await this.inventory.commitStock(
-        {
-          variantId: line.variantId,
-          quantity: line.quantity,
-          reason: 'SALES_ORDER',
-          referenceType: 'ORDER',
-          referenceId: order.id,
+    const order = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.salesOrder.create({
+        data: {
+          customerId: customerProfileId,
+          source: 'WALK_IN',
+          status: 'CONFIRMED',
+          orderStatus: 'CONFIRMED',
+          paymentStatus: 'PENDING',
+          fulfilmentStatus: 'NOT_STARTED',
+          totalCents,
+          notes: dto.notes,
+          lines: { create: dto.lines },
         },
-        staffId,
-      );
-    }
+        include: { lines: true },
+      });
+      for (const line of created.lines) {
+        await this.inventory.commitStock(
+          {
+            variantId: line.variantId,
+            quantity: line.quantity,
+            reason: 'SALES_ORDER',
+            referenceType: 'ORDER',
+            referenceId: created.id,
+          },
+          staffId,
+          tx,
+        );
+      }
+      return created;
+    });
     await this.audit.record({
       actorId: staffId,
       action: 'ORDER_CREATED',
@@ -205,6 +279,7 @@ export class OrdersService {
       entityId: order.id,
       after: { totalCents, lines: order.lines.length },
     });
+    this.invalidateListCache();
     return order;
   }
 
@@ -242,6 +317,7 @@ export class OrdersService {
       'ORDERS',
     );
 
+    this.invalidateListCache();
     return updated;
   }
 }

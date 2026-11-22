@@ -61,9 +61,18 @@ export default function ProductDetailPage({ params }: { params: { productId: str
   const [defectsOpen, setDefectsOpen] = useState(true);
 
   const [reserveOpen, setReserveOpen] = useState(false);
+  const [pendingReserveIntent, setPendingReserveIntent] = useState(false);
   const [reserveNotes, setReserveNotes] = useState('');
   const [reservedRef, setReservedRef] = useState<string | null>(null);
   const [reserveError, setReserveError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (user && pendingReserveIntent) {
+      setPendingReserveIntent(false);
+      setReservedRef(null);
+      setReserveOpen(true);
+    }
+  }, [user, pendingReserveIntent]);
 
   if (loadingProduct) {
     return (
@@ -119,6 +128,7 @@ export default function ProductDetailPage({ params }: { params: { productId: str
 
   const handleOpenReserve = () => {
     if (!user) {
+      setPendingReserveIntent(true);
       setLoginOpen(true);
       return;
     }
@@ -182,14 +192,9 @@ export default function ProductDetailPage({ params }: { params: { productId: str
 
           <h1 className="pdp-title">{product.name}</h1>
 
-          <div className="pdp-rating">
-            <span className="pdp-stars" aria-hidden="true">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <Star key={i} size={14} fill="#d48723" color="#d48723" />
-              ))}
-            </span>
-            <span>
-              {product.rating} · {product.reviewCount} reviews
+          <div className="pdp-rating" style={{ gap: 8 }}>
+            <span className="acct-pill green" style={{ fontSize: 12 }}>
+              Condition: {product.condition}
             </span>
           </div>
 

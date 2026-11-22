@@ -7,6 +7,7 @@ import { AuthGuard } from '../../common/guards/auth.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { PaginationDto } from '../../common/utils/pagination';
 import { CancelOrderDto } from './dto/cancel-order.dto';
+import { CreateCheckoutDto } from './dto/create-checkout.dto';
 import { WalkInOrderDto } from './dto/walk-in-order.dto';
 import { OrdersService } from './orders.service';
 
@@ -36,12 +37,7 @@ export class OrdersController {
   @Post('checkout')
   createCheckout(
     @CurrentUser() user: AuthenticatedUser,
-    @Body()
-    dto: {
-      items: Array<{ variantId: string; quantity: number }>;
-      disclosedDefectsAcknowledged?: boolean;
-      notes?: string;
-    },
+    @Body() dto: CreateCheckoutDto,
   ) {
     return this.orders.createCheckout(user.id, dto);
   }

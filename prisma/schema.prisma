@@ -410,6 +410,9 @@ model StockHold {
   expiresAt     DateTime?
   releasedAt    DateTime?
   lines         StockHoldLine[]
+
+  @@index([referenceType, referenceId, status])
+  @@index([status, expiresAt])
 }
 
 model StockHoldLine {
@@ -591,6 +594,7 @@ model Reservation {
 
   @@index([customerId])
   @@index([variantId])
+  @@index([status, expiresAt])
 }
 
 // ============================================================================
@@ -606,6 +610,9 @@ model CheckoutSession {
   expiresAt  DateTime
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+
+  @@index([status, expiresAt])
+  @@index([orderId])
 }
 
 model SalesOrder {
@@ -628,6 +635,8 @@ model SalesOrder {
   returns                     ReturnRequest[]
 
   @@index([customerId])
+  @@index([orderStatus, fulfilmentStatus])
+  @@index([createdAt])
 }
 
 model OrderLine {

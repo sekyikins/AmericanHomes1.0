@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsEmail, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsArray, IsBoolean, IsEmail, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class CreateStaffDto {
   @ApiProperty({ description: 'Staff member full name', example: 'Kwame Mensah' })
@@ -32,6 +32,12 @@ export class CreateStaffDto {
   @IsOptional()
   @IsString()
   permissionGroupId?: string;
+
+  @ApiPropertyOptional({ description: 'Multiple permission group IDs', type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  permissionGroupIds?: string[];
 
   @ApiPropertyOptional({ description: 'Restrict financial visibility (Owner-only control)', default: false })
   @IsOptional()

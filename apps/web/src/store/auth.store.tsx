@@ -105,11 +105,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    setLoading(true);
     if (isStaff) {
       setStaffToken(existing.token);
+      if (existing.meta) {
+        setStaffUser({
+          id: existing.meta.id ?? '',
+          phone: existing.meta.phone ?? '',
+          name: existing.meta.name,
+          email: existing.meta.email ?? null,
+          role: 'STAFF',
+          isOwner: existing.meta.isOwner,
+          restrictFinancials: existing.meta.restrictFinancials,
+          permissions: existing.meta.permissions,
+        });
+        setLoading(false);
+      } else {
+        setLoading(true);
+      }
     } else {
       setCustomerToken(existing.token);
+      if (existing.meta) {
+        setCustomerUser({
+          id: existing.meta.id ?? '',
+          phone: existing.meta.phone ?? '',
+          name: existing.meta.name,
+          email: existing.meta.email ?? null,
+          role: 'CUSTOMER',
+        });
+        setLoading(false);
+      } else {
+        setLoading(true);
+      }
     }
 
     authApi
@@ -138,10 +164,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         };
         if (isStaff) {
           setStaffUser(hydrated);
-          setStaffSession(existing.token, { name: hydrated.name, phone: hydrated.phone });
+          setStaffSession(existing.token, hydrated);
         } else {
           setCustomerUser(hydrated);
-          setSession(existing.token, { name: hydrated.name, phone: hydrated.phone });
+          setSession(existing.token, hydrated);
         }
       })
       .catch((err: { status?: number }) => {
@@ -178,12 +204,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (nextUser.role === 'STAFF') {
       setStaffUser(nextUser);
       setStaffToken(nextToken);
-      setStaffSession(nextToken, { name: nextUser.name, phone: nextUser.phone });
+      setStaffSession(nextToken, nextUser);
     } else {
       const customerRecord: AuthUser = { ...nextUser, role: 'CUSTOMER' };
       setCustomerUser(customerRecord);
       setCustomerToken(nextToken);
-      setSession(nextToken, { name: customerRecord.name, phone: customerRecord.phone });
+      setSession(nextToken, customerRecord);
     }
   };
 

@@ -3,10 +3,11 @@
 import {
   RecordPaymentModal,
   ReviewPaymentModal,
+  type PaymentAccountsInfo,
 } from '@/components/staff/payments/PaymentModals';
 import { StaffFilterDropdown } from '@/components/staff/StaffFilterDropdown';
 import { ConfirmDialog, EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
-import { ordersApi, paymentsApi } from '@/lib/api';
+import { governanceApi, ordersApi, paymentsApi } from '@/lib/api';
 import { downloadCsv, formatStatusLabel, shortRef } from '@/lib/staffUtils';
 import { useToast } from '@/providers/toast.provider';
 import {
@@ -15,7 +16,8 @@ import {
   Plus,
   Search,
 } from 'lucide-react';
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { Suspense, useCallback, useEffect, useState, type FormEvent } from 'react';
 
 type PaymentRow = {
   id: string;
@@ -41,10 +43,12 @@ type OrderOption = {
   paymentStatus: string;
 };
 
-export default function StaffPaymentsPage() {
+function StaffPaymentsContent() {
+  const searchParams = useSearchParams();
   const { showToast } = useToast();
   const [rows, setRows] = useState<PaymentRow[]>([]);
   const [orders, setOrders] = useState<OrderOption[]>([]);
+  const [paymentAccounts, setPaymentAccounts] = useState<PaymentAccountsInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -58,14 +62,19 @@ export default function StaffPaymentsPage() {
 
   const [orderId, setOrderId] = useState('');
   const [amountGhs, setAmountGhs] = useState('');
-  const [method, setMethod] = useState('MANUAL');
+  const [method, setMethod] = useState('MOBILE_MONEY');
   const [providerRef, setProviderRef] = useState('');
   const [reverseReason, setReverseReason] = useState('');
 
-  const loadOrders = useCallback(async () => {
-    const ordList = await ordersApi.list().catch(() => []);
-    const opts: OrderOption[] = (Array.isArray(ordList) ? ordList : []).map(
-      (o: Record<string, unknown>) => {
+  const loadOrders = useCallback(async (preferredOrderId?: string | null) => {
+    const [ordList, accounts] = await Promise.all([
+      ordersApi.list().catch(() => []),
+      governanceApi.getPaymentAccounts().catch(() => null),
+    ]);
+    if (accounts) setPaymentAccounts(accounts);
+    const opts: OrderOption[] = (Array.isArray(ordList) ? ordList : [])
+      .filter((o: Record<string, unknown>) => String(o.orderStatus ?? '').toUpperCase() !== 'CANCELLED')
+      .map((o: Record<string, unknown>) => {
         const customer = o.customer as { user?: { name?: string; phone?: string } } | undefined;
         const totalCents = Number(o.totalCents ?? 0);
         const orderPayments = (Array.isArray(o.payments) ? o.payments : []) as Array<{
@@ -85,15 +94,16 @@ export default function StaffPaymentsPage() {
           remainingCents,
           paymentStatus: String(o.paymentStatus || 'PENDING'),
         };
-      },
-    );
+      })
+      .filter((o) => o.remainingCents > 0);
     setOrders(opts);
-    const firstOpen = opts.find((o) => o.remainingCents > 0) ?? opts[0];
-    if (firstOpen) {
-      setOrderId(firstOpen.id);
-      setAmountGhs(
-        firstOpen.remainingCents > 0 ? (firstOpen.remainingCents / 100).toFixed(2) : '',
-      );
+    const chosen = (preferredOrderId ? opts.find((o) => o.id === preferredOrderId) : undefined) ?? opts[0];
+    if (chosen) {
+      setOrderId(chosen.id);
+      setAmountGhs((chosen.remainingCents / 100).toFixed(2));
+    } else {
+      setOrderId('');
+      setAmountGhs('');
     }
   }, []);
 
@@ -142,6 +152,13 @@ export default function StaffPaymentsPage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    const recordOrderId = searchParams.get('recordOrderId');
+    if (recordOrderId) {
+      loadOrders(recordOrderId).then(() => setModalMode('create'));
+    }
+  }, [searchParams, loadOrders]);
 
   const visible = rows.filter((r) => {
     if (statusFilter !== 'All' && r.status !== statusFilter) return false;
@@ -363,6 +380,7 @@ export default function StaffPaymentsPage() {
         amountGhs={amountGhs}
         method={method}
         providerRef={providerRef}
+        paymentAccounts={paymentAccounts}
         submitting={submitting}
         onOrderChange={(nextId) => {
           const nextOrd = orders.find((o) => o.id === nextId);
@@ -376,7 +394,10 @@ export default function StaffPaymentsPage() {
           }
         }}
         onAmountChange={setAmountGhs}
-        onMethodChange={setMethod}
+        onMethodChange={(nextMethod) => {
+          setMethod(nextMethod);
+          if (nextMethod === 'CASH') setProviderRef('');
+        }}
         onProviderRefChange={setProviderRef}
         onSubmit={handleSubmit}
         onClose={() => setModalMode(null)}
@@ -412,5 +433,13 @@ export default function StaffPaymentsPage() {
         onConfirm={handleConfirmAction}
       />
     </div>
+  );
+}
+
+export default function StaffPaymentsPage() {
+  return (
+    <Suspense fallback={<TableSkeleton rows={6} />}>
+      <StaffPaymentsContent />
+    </Suspense>
   );
 }

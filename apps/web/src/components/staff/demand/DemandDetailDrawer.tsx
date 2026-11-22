@@ -151,35 +151,58 @@ export function DemandDetailDrawer({
           />
         </label>
 
-        <div style={{ display: 'flex', gap: 10 }}>
-          {mode !== 'sourcing' && (
+        {(mode === 'requests' && selected.status === 'Under review') ||
+        (mode === 'sourcing' && selected.status !== 'Provider confirmed' && selected.status !== 'Deferred') ||
+        (mode === 'allocations' && selected.status === 'Under review') ? (
+          <div style={{ display: 'flex', gap: 10 }}>
+            {mode !== 'sourcing' && (
+              <button
+                type="button"
+                className="button"
+                disabled={submitting}
+                aria-busy={submitting || undefined}
+                style={{ flex: 1, background: '#fff' }}
+                onClick={onDefer}
+              >
+                {submitting
+                  ? 'Saving…'
+                  : mode === 'allocations'
+                    ? 'Decline offer'
+                    : 'Defer'}
+              </button>
+            )}
             <button
               type="button"
-              className="button"
+              className="button primary"
               disabled={submitting}
-              style={{ flex: 1, background: '#fff' }}
-              onClick={onDefer}
+              aria-busy={submitting || undefined}
+              style={{ flex: 1.5 }}
+              onClick={onPrimaryDecision}
             >
-              {mode === 'allocations' ? 'Decline offer' : 'Defer'}
+              {submitting
+                ? 'Saving…'
+                : mode === 'sourcing'
+                  ? 'Confirm with provider'
+                  : mode === 'allocations'
+                    ? 'Mark offer accepted'
+                    : 'Approve for sourcing'}
             </button>
-          )}
-          <button
-            type="button"
-            className="button primary"
-            disabled={submitting}
-            aria-busy={submitting || undefined}
-            style={{ flex: 1.5 }}
-            onClick={onPrimaryDecision}
+          </div>
+        ) : (
+          <div
+            style={{
+              padding: '10px 12px',
+              background: '#f8fafc',
+              border: '0.8px solid var(--line)',
+              borderRadius: 4,
+              fontSize: 12.5,
+              color: 'var(--ink-soft)',
+              textAlign: 'center',
+            }}
           >
-            {submitting
-              ? 'Saving…'
-              : mode === 'sourcing'
-                ? 'Confirm with provider'
-                : mode === 'allocations'
-                  ? 'Mark offer accepted'
-                  : 'Approve for sourcing'}
-          </button>
-        </div>
+            Current status: <strong>{selected.status}</strong> — no further stage action required.
+          </div>
+        )}
       </aside>
     </>
   );

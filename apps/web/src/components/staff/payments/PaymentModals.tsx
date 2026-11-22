@@ -1,10 +1,19 @@
 'use client';
 
 import { StaffModal } from '@/components/staff/StaffModal';
-import { Button } from '@/components/ui';
+import { Button, SearchableSelect } from '@/components/ui';
 import { formatGhs } from '@/lib/staffUtils';
 import { ArrowRight, Info, ShieldCheck } from 'lucide-react';
 import type { FormEvent } from 'react';
+
+export interface PaymentAccountsInfo {
+  momoNetwork: string;
+  momoNumber: string;
+  momoName: string;
+  bankName: string;
+  bankAccountNumber: string;
+  bankAccountName: string;
+}
 
 export interface PaymentOrderOption {
   id: string;
@@ -35,6 +44,7 @@ export function RecordPaymentModal({
   amountGhs,
   method,
   providerRef,
+  paymentAccounts,
   submitting,
   onOrderChange,
   onAmountChange,
@@ -50,6 +60,7 @@ export function RecordPaymentModal({
   amountGhs: string;
   method: string;
   providerRef: string;
+  paymentAccounts?: PaymentAccountsInfo | null;
   submitting: boolean;
   onOrderChange: (orderId: string) => void;
   onAmountChange: (value: string) => void;
@@ -58,6 +69,13 @@ export function RecordPaymentModal({
   onSubmit: (e: FormEvent) => void;
   onClose: () => void;
 }) {
+  const orderSelectOptions = orders.map((o) => ({
+    value: o.id,
+    label: `${o.reference} · ${o.customer} · Rem: ${formatGhs(o.remainingCents)}`,
+    sublabel: `Original: ${formatGhs(o.totalCents)} · ${o.paymentStatus}`,
+    searchText: `${o.reference} ${o.customer} ${o.paymentStatus}`,
+  }));
+
   return (
     <StaffModal open={open} label="Record manual payment" onClose={onClose}>
       <div className="res-head-row">
@@ -73,20 +91,17 @@ export function RecordPaymentModal({
       </p>
 
       <form onSubmit={onSubmit}>
-        <label className="login-field">
+        <div className="login-field">
           <span>Order</span>
-          <select
-            className="staff-field-select"
+          <SearchableSelect
+            options={orderSelectOptions}
             value={orderId}
-            onChange={(e) => onOrderChange(e.target.value)}
-          >
-            {orders.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.reference} · {o.customer} · Rem: {formatGhs(o.remainingCents)} / Orig: {formatGhs(o.totalCents)} ({o.paymentStatus})
-              </option>
-            ))}
-          </select>
-        </label>
+            onChange={onOrderChange}
+            placeholder="Search by order ref or customer name…"
+            searchPlaceholder="Type order ref or customer name…"
+            emptyText="No unpaid or partial orders match your search"
+          />
+        </div>
 
         {selectedOrderOption && (
           <div className="rec-info-banner" style={{ marginBottom: 12 }}>
@@ -94,8 +109,6 @@ export function RecordPaymentModal({
             <span style={{ fontSize: 12 }}>
               Remainder: <strong>{formatGhs(selectedOrderOption.remainingCents)}</strong> · Original:{' '}
               <strong>{formatGhs(selectedOrderOption.totalCents)}</strong>
-              {selectedOrderOption.remainingCents === 0 &&
-                ' — Order is paid in full; refund any excess payment.'}
             </span>
           </div>
         )}
@@ -125,21 +138,72 @@ export function RecordPaymentModal({
               value={method}
               onChange={(e) => onMethodChange(e.target.value)}
             >
-              <option value="MANUAL">Manual / Mobile money</option>
+              <option value="MOBILE_MONEY">Mobile money</option>
               <option value="BANK_TRANSFER">Bank transfer</option>
               <option value="CASH">Cash</option>
             </select>
           </label>
         </div>
 
-        <label className="login-field">
-          <span>Provider / bank reference</span>
-          <input
-            value={providerRef}
-            onChange={(e) => onProviderRefChange(e.target.value)}
-            placeholder="Optional transaction ID"
-          />
-        </label>
+        {method === 'MOBILE_MONEY' && paymentAccounts && (
+          <div
+            style={{
+              background: '#f8fafc',
+              border: '0.8px solid var(--line)',
+              borderRadius: 4,
+              padding: '8px 12px',
+              fontSize: 12,
+              color: 'var(--ink-soft)',
+              marginBottom: 12,
+            }}
+          >
+            <div>
+              <strong>{paymentAccounts.momoNetwork}:</strong> {paymentAccounts.momoNumber}
+            </div>
+            <div>Account name: {paymentAccounts.momoName}</div>
+          </div>
+        )}
+
+        {method === 'BANK_TRANSFER' && paymentAccounts && (
+          <div
+            style={{
+              background: '#f8fafc',
+              border: '0.8px solid var(--line)',
+              borderRadius: 4,
+              padding: '8px 12px',
+              fontSize: 12,
+              color: 'var(--ink-soft)',
+              marginBottom: 12,
+            }}
+          >
+            <div>
+              <strong>{paymentAccounts.bankName}:</strong> {paymentAccounts.bankAccountNumber}
+            </div>
+            <div>Account name: {paymentAccounts.bankAccountName}</div>
+          </div>
+        )}
+
+        {method === 'CASH' ? (
+          <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12 }}>
+            Payment reference: <strong>None</strong> (Cash collected in person)
+          </div>
+        ) : (
+          <label className="login-field">
+            <span>
+              {method === 'BANK_TRANSFER' ? 'Bank reference *' : 'Transaction ID *'}
+            </span>
+            <input
+              required
+              value={providerRef}
+              onChange={(e) => onProviderRefChange(e.target.value)}
+              placeholder={
+                method === 'BANK_TRANSFER'
+                  ? 'Enter bank transfer reference'
+                  : 'Enter Mobile Money transaction ID'
+              }
+            />
+          </label>
+        )}
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
           <Button type="submit" variant="primary" loading={submitting} disabled={!orderId}>

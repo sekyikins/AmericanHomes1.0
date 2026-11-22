@@ -26,6 +26,7 @@ type StaffMember = {
   details: string;
   status: 'Active' | 'Inactive';
   groups: string[];
+  restrictFinancials?: boolean;
   isOwner?: boolean;
 };
 
@@ -50,6 +51,7 @@ export default function StaffAccountsPage() {
   const [jobTitle, setJobTitle] = useState('');
   const [status, setStatus] = useState<'Active' | 'Inactive'>('Active');
   const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
+  const [restrictFinancials, setRestrictFinancials] = useState(false);
 
   const availableGroups = Object.keys(groupMap);
 
@@ -74,6 +76,7 @@ export default function StaffAccountsPage() {
               id: string;
               isActive: boolean;
               isOwner?: boolean;
+              restrictFinancials?: boolean;
               jobTitle?: string | null;
               user?: { name?: string; phone?: string; email?: string };
               groupAssignments?: Array<{ group?: { name?: string } }>;
@@ -93,6 +96,7 @@ export default function StaffAccountsPage() {
               details: groups.length > 0 ? groups.join(', ') : (row.user?.email || 'Staff account'),
               status: row.isActive ? 'Active' : 'Inactive',
               groups,
+              restrictFinancials: Boolean(row.restrictFinancials),
               isOwner: Boolean(row.isOwner),
             };
           });
@@ -131,6 +135,7 @@ export default function StaffAccountsPage() {
     setJobTitle('');
     setStatus('Active');
     setSelectedGroups(availableGroups[0] ? [availableGroups[0]] : []);
+    setRestrictFinancials(false);
   };
 
   const openEdit = (member: StaffMember) => {
@@ -143,6 +148,7 @@ export default function StaffAccountsPage() {
     setJobTitle(member.jobTitle);
     setStatus(member.status);
     setSelectedGroups(member.groups);
+    setRestrictFinancials(Boolean(member.restrictFinancials));
   };
 
   const toggleGroup = (group: string) => {
@@ -156,7 +162,7 @@ export default function StaffAccountsPage() {
     setSaving(true);
     const detailsText =
       selectedGroups.length > 0 ? selectedGroups.join(', ') : 'No group assigned';
-    const firstGroupId = selectedGroups.map((g) => groupMap[g]).find(Boolean);
+    const groupIds = selectedGroups.map((g) => groupMap[g]).filter(Boolean);
 
     try {
       if (modalMode === 'create') {
@@ -166,7 +172,8 @@ export default function StaffAccountsPage() {
           ...(email.trim() ? { email: email.trim() } : {}),
           ...(password ? { password } : {}),
           ...(jobTitle.trim() ? { jobTitle: jobTitle.trim() } : {}),
-          ...(firstGroupId ? { permissionGroupId: firstGroupId } : {}),
+          ...(groupIds.length > 0 ? { permissionGroupIds: groupIds } : {}),
+          ...(user?.isOwner ? { restrictFinancials } : {}),
         })) as { id?: string } | null;
         showToast(`Created staff account for ${fullName.trim()}`, 'success');
         fetchStaff(true);
@@ -178,7 +185,8 @@ export default function StaffAccountsPage() {
           ...(password ? { password } : {}),
           ...(jobTitle.trim() ? { jobTitle: jobTitle.trim() } : {}),
           isActive: status === 'Active',
-          ...(firstGroupId ? { permissionGroupId: firstGroupId } : {}),
+          permissionGroupIds: groupIds,
+          ...(user?.isOwner ? { restrictFinancials } : {}),
         });
         if (status === 'Inactive') {
           await staffApi.deactivate(editingId);
@@ -361,6 +369,8 @@ export default function StaffAccountsPage() {
         status={status}
         availableGroups={availableGroups}
         selectedGroups={selectedGroups}
+        restrictFinancials={restrictFinancials}
+        canRestrictFinancials={Boolean(user?.isOwner)}
         saving={saving}
         onFullNameChange={setFullName}
         onPhoneChange={setPhone}
@@ -369,6 +379,7 @@ export default function StaffAccountsPage() {
         onJobTitleChange={setJobTitle}
         onStatusChange={setStatus}
         onToggleGroup={toggleGroup}
+        onRestrictFinancialsChange={setRestrictFinancials}
         onSubmit={handleSubmit}
         onClose={() => setModalMode(null)}
       />

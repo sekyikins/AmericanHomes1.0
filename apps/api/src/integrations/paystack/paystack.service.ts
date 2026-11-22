@@ -32,6 +32,7 @@ export class PaystackService {
         email,
         amount: amountPesewas,
         currency: 'GHS',
+        callback_url: `${(process.env.FRONTEND_URL ?? process.env.CORS_ORIGINS?.split(',')[0] ?? 'http://localhost:3000').trim()}/account/payments`,
         metadata,
       }),
     });

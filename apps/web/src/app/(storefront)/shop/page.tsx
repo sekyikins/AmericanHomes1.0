@@ -39,6 +39,8 @@ function ShopContent() {
   const [search, setSearch] = useState('');
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [priceRange, setPriceRange] = useState<'all' | 'under3000' | 'over3000'>('all');
+  const [conditionFilter, setConditionFilter] = useState<'all' | 'new' | 'excellent' | 'good' | 'fair'>('all');
+  const [sortBy, setSortBy] = useState<'featured' | 'price-asc' | 'price-desc'>('featured');
 
   useEffect(() => {
     let active = true;
@@ -74,20 +76,32 @@ function ShopContent() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [filtersOpen]);
 
-  const activeFilterCount = (priceRange !== 'all' ? 1 : 0) + (category !== 'All' ? 1 : 0);
+  const activeFilterCount =
+    (priceRange !== 'all' ? 1 : 0) +
+    (category !== 'All' ? 1 : 0) +
+    (conditionFilter !== 'all' ? 1 : 0);
 
-  const visible = products.filter((p) => {
-    const pCat = normalizeCategory(p.category);
-    const selCat = normalizeCategory(category);
-    const matchesCat = category === 'All' || pCat === selCat || pCat.startsWith(`${selCat} `);
-    const matchesSearch =
-      !search.trim() || p.name.toLowerCase().includes(search.toLowerCase());
-    const matchesPrice =
-      priceRange === 'all' ||
-      (priceRange === 'under3000' && p.pricePesewas < 300000) ||
-      (priceRange === 'over3000' && p.pricePesewas >= 300000);
-    return matchesCat && matchesSearch && matchesPrice;
-  });
+  const visible = products
+    .filter((p) => {
+      const pCat = normalizeCategory(p.category);
+      const selCat = normalizeCategory(category);
+      const matchesCat = category === 'All' || pCat === selCat || pCat.startsWith(`${selCat} `);
+      const matchesSearch =
+        !search.trim() || p.name.toLowerCase().includes(search.toLowerCase());
+      const matchesPrice =
+        priceRange === 'all' ||
+        (priceRange === 'under3000' && p.pricePesewas < 300000) ||
+        (priceRange === 'over3000' && p.pricePesewas >= 300000);
+      const matchesCondition =
+        conditionFilter === 'all' ||
+        p.condition.toLowerCase().includes(conditionFilter);
+      return matchesCat && matchesSearch && matchesPrice && matchesCondition;
+    })
+    .sort((a, b) => {
+      if (sortBy === 'price-asc') return a.pricePesewas - b.pricePesewas;
+      if (sortBy === 'price-desc') return b.pricePesewas - a.pricePesewas;
+      return 0;
+    });
 
   return (
     <main className="page-shell">
@@ -132,15 +146,64 @@ function ShopContent() {
         ))}
       </div>
 
-      <p style={{ color: 'var(--muted)', marginTop: 30 }}>
-        {loadingProducts ? (
-          'Loading available products…'
-        ) : (
-          <>
-            <strong style={{ color: 'var(--ink)' }}>{visible.length}</strong> available products
-          </>
-        )}
-      </p>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: 12,
+          flexWrap: 'wrap',
+          marginTop: 24,
+        }}
+      >
+        <p style={{ color: 'var(--muted)', margin: 0 }}>
+          {loadingProducts ? (
+            'Loading available products…'
+          ) : (
+            <>
+              <strong style={{ color: 'var(--ink)' }}>{visible.length}</strong> available products
+            </>
+          )}
+        </p>
+
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <select
+            aria-label="Filter by condition"
+            value={conditionFilter}
+            onChange={(e) => setConditionFilter(e.target.value as typeof conditionFilter)}
+            style={{
+              padding: '8px 12px',
+              border: '0.8px solid var(--line)',
+              borderRadius: 4,
+              background: '#fff',
+              fontSize: 13,
+            }}
+          >
+            <option value="all">All conditions</option>
+            <option value="new">New</option>
+            <option value="excellent">Excellent</option>
+            <option value="good">Good</option>
+            <option value="fair">Fair</option>
+          </select>
+
+          <select
+            aria-label="Sort products"
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+            style={{
+              padding: '8px 12px',
+              border: '0.8px solid var(--line)',
+              borderRadius: 4,
+              background: '#fff',
+              fontSize: 13,
+            }}
+          >
+            <option value="featured">Sort: Featured</option>
+            <option value="price-asc">Price: Low to High</option>
+            <option value="price-desc">Price: High to Low</option>
+          </select>
+        </div>
+      </div>
 
       {loadingProducts ? (
         <div style={{ marginTop: 28 }}>
@@ -159,6 +222,8 @@ function ShopContent() {
                   setSearch('');
                   setCategory('All');
                   setPriceRange('all');
+                  setConditionFilter('all');
+                  setSortBy('featured');
                 }}
               >
                 Clear filters

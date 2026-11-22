@@ -1,4 +1,5 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { invalidateAuthCache } from '../../common/guards/auth.guard';
 import { hashPassword } from '../../common/utils/password';
 import { PrismaService } from '../../database/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -51,6 +52,12 @@ export class StaffService {
           ...(dto.password ? { passwordHash: hashPassword(dto.password) } : {}),
         },
       });
+      const groupIds = Array.from(
+        new Set([
+          ...(dto.permissionGroupId ? [dto.permissionGroupId] : []),
+          ...(dto.permissionGroupIds ?? []),
+        ]),
+      );
       const existingStaff = await tx.staffProfile.findUnique({ where: { userId: user.id } });
       const staff = existingStaff
         ? await tx.staffProfile.update({
@@ -67,8 +74,8 @@ export class StaffService {
               jobTitle: dto.jobTitle,
               isActive: true,
               restrictFinancials: actorIsOwner ? (dto.restrictFinancials ?? false) : false,
-              ...(dto.permissionGroupId
-                ? { groupAssignments: { create: { groupId: dto.permissionGroupId } } }
+              ...(groupIds.length > 0
+                ? { groupAssignments: { create: groupIds.map((groupId) => ({ groupId })) } }
                 : {}),
             },
             include: {
@@ -112,6 +119,23 @@ export class StaffService {
     }
     if (dto.isActive === false && existing.isOwner) {
       throw new ForbiddenException('The Owner account cannot be deactivated');
+    }
+    if (dto.permissionGroupIds !== undefined || dto.permissionGroupId !== undefined) {
+      invalidateAuthCache(existing.userId);
+      const nextGroupIds = Array.from(
+        new Set([
+          ...(dto.permissionGroupId ? [dto.permissionGroupId] : []),
+          ...(dto.permissionGroupIds ?? []),
+        ]),
+      );
+      await this.prisma.$transaction(async (tx) => {
+        await tx.staffGroupAssignment.deleteMany({ where: { staffId: id } });
+        if (nextGroupIds.length > 0) {
+          await tx.staffGroupAssignment.createMany({
+            data: nextGroupIds.map((groupId) => ({ staffId: id, groupId })),
+          });
+        }
+      });
     }
     if (
       dto.jobTitle !== undefined ||
@@ -165,6 +189,7 @@ export class StaffService {
       where: { id: existing.userId },
       data: { sessionVersion: { increment: 1 } },
     });
+    invalidateAuthCache(existing.userId);
     await this.audit.record({
       actorId,
       action: 'STAFF_ACCOUNT_DEACTIVATED',

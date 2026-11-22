@@ -21,11 +21,11 @@ import {
 } from '@/lib/data/products';
 import { ProductCard } from './ProductCard';
 
-const categories = [
-  { name: 'Furniture', count: '42 products', Icon: Home },
-  { name: 'Appliances', count: '28 products', Icon: Refrigerator },
-  { name: 'Bicycles', count: '12 products', Icon: Bike },
-  { name: 'New arrivals', count: '19 products', Icon: Sparkles },
+const categoryDefs = [
+  { name: 'Living room', Icon: Home },
+  { name: 'Kitchen', Icon: Refrigerator },
+  { name: 'Outdoors', Icon: Bike },
+  { name: 'Office', Icon: Sparkles },
 ];
 
 const processSteps = [
@@ -73,7 +73,15 @@ export function Storefront() {
       active = false;
     };
   }, []);
-  const featured = featuredProducts.slice(0, 4);
+  const availableProducts = featuredProducts.filter((p) => p.availableCount > 0);
+  const featured = (availableProducts.length > 0 ? availableProducts : featuredProducts).slice(0, 4);
+  const heroFeatured = featured[0];
+  const categories = categoryDefs.map((c) => {
+    const n = featuredProducts.filter(
+      (p) => p.category.replace(/-/g, ' ').toLowerCase() === c.name.toLowerCase(),
+    ).length;
+    return { ...c, count: `${n} ${n === 1 ? 'product' : 'products'}` };
+  });
 
   return (
     <main>
@@ -121,8 +129,8 @@ export function Storefront() {
             </div>
             <div className="product-callout">
               <span className="status">● Ready to collect</span>
-              <strong>Haven Three-Seater Sofa</strong>
-              <small>From GHS 8,950</small>
+              <strong>{heroFeatured?.name ?? 'Inspected USA Imports'}</strong>
+              <small>{heroFeatured ? `From GHS ${(heroFeatured.pricePesewas / 100).toLocaleString()}` : 'Ready in Tema'}</small>
             </div>
           </div>
         </section>

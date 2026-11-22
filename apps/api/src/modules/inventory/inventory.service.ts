@@ -154,8 +154,15 @@ export class InventoryService {
     });
   }
 
-  async commitStock(dto: CommitStockDto, actorId?: string) {
-    return this.prisma.$transaction(async (tx) => {
+  async commitStock(
+    dto: CommitStockDto,
+    actorId?: string,
+    externalTx?: Parameters<Parameters<PrismaService['$transaction']>[0]>[0],
+  ) {
+    if (!Number.isInteger(dto.quantity) || dto.quantity < 1) {
+      throw new ConflictException('Stock commitment quantity must be at least 1');
+    }
+    const run = async (tx: Parameters<Parameters<PrismaService['$transaction']>[0]>[0]) => {
       const lots = await tx.$queryRaw<
         Array<{ id: string; available: number }>
       >`SELECT id, available FROM "StockLot" WHERE "variantId" = ${dto.variantId} AND available > 0 ORDER BY "createdAt" ASC FOR UPDATE`;
@@ -212,7 +219,12 @@ export class InventoryService {
       }
 
       return hold;
-    });
+    };
+
+    if (externalTx) {
+      return run(externalTx);
+    }
+    return this.prisma.$transaction(run);
   }
 
   async releaseHold(holdId: string, actorId?: string) {

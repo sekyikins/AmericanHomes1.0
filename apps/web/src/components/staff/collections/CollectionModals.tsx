@@ -1,7 +1,7 @@
 'use client';
 
 import { StaffModal } from '@/components/staff/StaffModal';
-import { Button } from '@/components/ui';
+import { Button, SearchableSelect } from '@/components/ui';
 import { formatGhs } from '@/lib/staffUtils';
 import { ArrowRight, Info, ShieldCheck } from 'lucide-react';
 import type { FormEvent } from 'react';
@@ -118,23 +118,24 @@ export function RecordCollectionModal({
       </p>
 
       <form onSubmit={onSubmit}>
-        <label className="login-field">
+        <div className="login-field">
           <span>Order</span>
-          <select
-            className="staff-field-select"
-            value={selectedOrderId}
-            onChange={(e) => onOrderChange(e.target.value)}
-          >
-            {orderOptions.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.reference} · {o.customer} ·{' '}
-                {o.paymentStatus === 'PAID'
+          <SearchableSelect
+            options={orderOptions.map((o) => ({
+              value: o.id,
+              label: `${o.reference} · ${o.customer}`,
+              sublabel:
+                o.paymentStatus === 'PAID'
                   ? 'Paid in full'
-                  : `${o.paymentStatus} (Rem: ${formatGhs(o.remainingCents)})`}
-              </option>
-            ))}
-          </select>
-        </label>
+                  : `${o.paymentStatus} (Rem: ${formatGhs(o.remainingCents)})`,
+              searchText: `${o.reference} ${o.customer} ${o.paymentStatus}`,
+            }))}
+            value={selectedOrderId}
+            onChange={onOrderChange}
+            placeholder="Search order by reference or customer…"
+            searchPlaceholder="Type order ref or customer name…"
+          />
+        </div>
 
         {needsUnpaidApproval && (
           <div

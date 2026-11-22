@@ -393,7 +393,7 @@ export function LoginCard({
               )}
             </div>
 
-            <div className="login-notice">Prototype only — OTP verification is simulated.</div>
+            <div className="login-notice">A 6-digit verification code will be sent via SMS.</div>
           </>
         ) : step === 'otp' ? (
           <>
@@ -490,7 +490,7 @@ export function LoginCard({
             </form>
 
             <div className="login-notice">
-              Prototype only — enter any 4–6 digits to sign in.
+              Enter the 6-digit verification code sent to your phone via SMS.
             </div>
           </>
         ) : null}

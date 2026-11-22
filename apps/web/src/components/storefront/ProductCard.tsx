@@ -118,7 +118,10 @@ export function ProductCard({ product }: { product: CatalogProduct }) {
 
       <Link href={`/shop/${product.id}`} className="product-body-link">
         <div className="product-body">
-          <p>{product.category}</p>
+          <p>
+            {product.category}
+            {product.condition ? ` · ${product.condition.split('·')[0].trim()}` : ''}
+          </p>
           <h3>{product.name}</h3>
           <div className="product-price-row">
             <strong>{formatGHS(product.pricePesewas)}</strong>

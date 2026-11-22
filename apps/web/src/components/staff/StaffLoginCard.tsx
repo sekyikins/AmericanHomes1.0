@@ -120,6 +120,7 @@ export function StaffLoginCard({ onSuccess }: { onSuccess?: () => void }) {
             <input
               id="staff-password-input"
               type={showPassword ? 'text' : 'password'}
+              autoComplete="current-password"
               className="login-phone-input"
               value={staffPassword}
               onChange={(e) => setStaffPassword(e.target.value)}

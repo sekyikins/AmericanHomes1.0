@@ -27,17 +27,24 @@ export class ReturnsService {
     });
   }
 
-  async submit(userId: string, dto: CreateReturnDto) {
+  async submit(userId: string, dto: CreateReturnDto, userRole?: string) {
     const order = await this.prisma.salesOrder.findFirst({
       where: { OR: [{ id: dto.orderId }, { reference: dto.orderId }] },
-      include: { lines: true },
+      include: { lines: true, customer: true },
     });
     if (!order) throw new NotFoundException(`Order ${dto.orderId} not found`);
+
+    if (userRole !== 'STAFF' && order.customer?.userId !== userId) {
+      throw new ForbiddenException('You can only submit return requests for your own orders');
+    }
 
     const firstCollection = await this.prisma.collectionRecord.findFirst({
       where: { orderId: order.id, collectedAt: { not: null } },
       orderBy: { collectedAt: 'asc' },
     });
+    if (userRole !== 'STAFF' && !firstCollection?.collectedAt) {
+      throw new BadRequestException('Order must be collected before a return can be requested');
+    }
 
     const firstCollectedAt = firstCollection?.collectedAt ?? order.createdAt;
     const daysSinceCollection = (Date.now() - firstCollectedAt.getTime()) / (1000 * 60 * 60 * 24);
@@ -46,6 +53,38 @@ export class ReturnsService {
     const isDisclosedDefect =
       order.disclosedDefectsAcknowledged &&
       dto.reason.toLowerCase().includes('disclosed');
+
+    const linesToCreate: Array<{ variantId: string; quantity: number }> = [];
+    if (dto.lines && dto.lines.length > 0) {
+      const purchasedByVariant = new Map<string, number>();
+      for (const ol of order.lines) {
+        purchasedByVariant.set(ol.variantId, (purchasedByVariant.get(ol.variantId) ?? 0) + ol.quantity);
+      }
+      const existingReturns = await this.prisma.returnRequest.findMany({
+        where: { orderId: order.id, status: { in: ['PENDING', 'APPROVED'] } },
+        include: { lines: true },
+      });
+      const returnedByVariant = new Map<string, number>();
+      for (const r of existingReturns) {
+        for (const rl of r.lines) {
+          returnedByVariant.set(rl.variantId, (returnedByVariant.get(rl.variantId) ?? 0) + rl.quantity);
+        }
+      }
+      for (const reqLine of dto.lines) {
+        const purchased = purchasedByVariant.get(reqLine.variantId) ?? 0;
+        if (purchased === 0) {
+          throw new BadRequestException(`Variant ${reqLine.variantId} is not part of this order`);
+        }
+        const alreadyReturned = returnedByVariant.get(reqLine.variantId) ?? 0;
+        const maxReturnable = Math.max(0, purchased - alreadyReturned);
+        if (reqLine.quantity > maxReturnable) {
+          throw new BadRequestException(
+            `Return quantity (${reqLine.quantity}) exceeds remaining returnable quantity (${maxReturnable})`,
+          );
+        }
+        linesToCreate.push({ variantId: reqLine.variantId, quantity: reqLine.quantity });
+      }
+    }
 
     return this.prisma.returnRequest.create({
       data: {
@@ -56,6 +95,7 @@ export class ReturnsService {
         firstCollectedAt,
         withinSevenDays,
         isDisclosedDefect,
+        ...(linesToCreate.length > 0 ? { lines: { create: linesToCreate } } : {}),
       },
       include: { lines: true },
     });

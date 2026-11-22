@@ -7,14 +7,28 @@ import { ManifestRevisionDto } from './dto/manifest-revision.dto';
 
 @Injectable()
 export class ShipmentsService {
+  private readonly listCache = new Map<string, { expiresAt: number; data: unknown }>();
+  private static readonly LIST_CACHE_TTL_MS = 15_000;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
   ) {}
 
-  findAll(query: PaginationDto) {
-    return this.prisma.shipment.findMany({
-      ...paginationParams(query),
+  private invalidateListCache() {
+    this.listCache.clear();
+  }
+
+  async findAll(query: PaginationDto) {
+    const { skip, take } = paginationParams(query);
+    const cacheKey = `${skip}:${take}`;
+    const cached = this.listCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.data;
+    }
+    const data = await this.prisma.shipment.findMany({
+      skip,
+      take,
       include: {
         _count: { select: { manifestRevisions: true, receivingSessions: true, expenses: true } },
         manifestRevisions: {
@@ -27,13 +41,25 @@ export class ShipmentsService {
           select: {
             id: true,
             status: true,
-            lines: { select: { manifestItemId: true, expectedQty: true, receivedQty: true } },
+            lines: {
+              select: {
+                manifestItemId: true,
+                expectedQty: true,
+                receivedQty: true,
+                discrepancies: { include: { resolution: true } },
+              },
+            },
           },
         },
         expenses: { select: { id: true, category: true, description: true, amountCents: true } },
       },
       orderBy: { createdAt: 'desc' },
     });
+    this.listCache.set(cacheKey, {
+      expiresAt: Date.now() + ShipmentsService.LIST_CACHE_TTL_MS,
+      data,
+    });
+    return data;
   }
 
   async findById(id: string) {

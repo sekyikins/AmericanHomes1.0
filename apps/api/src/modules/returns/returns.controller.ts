@@ -22,7 +22,7 @@ export class ReturnsController {
 
   @Post()
   submit(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateReturnDto) {
-    return this.returns.submit(user.id, dto);
+    return this.returns.submit(user.id, dto, user.role);
   }
 
   @Post(':id/decision')

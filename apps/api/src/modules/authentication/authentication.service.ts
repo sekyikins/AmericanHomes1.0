@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { invalidateAuthCache } from '../../common/guards/auth.guard';
 import { randomBytes } from 'crypto';
 import { generateTotpCode, hashPassword, verifyPassword, verifyTotpCode } from '../../common/utils/password';
 import { signSessionToken } from '../../common/utils/token';
@@ -263,6 +264,7 @@ export class AuthenticationService {
       },
       select: { sessionVersion: true },
     });
+    invalidateAuthCache(userId);
     await this.prisma.auditEvent.create({
       data: {
         actorId: userId,
@@ -286,6 +288,7 @@ export class AuthenticationService {
       data: { sessionVersion: { increment: 1 } },
       select: { sessionVersion: true },
     });
+    invalidateAuthCache(userId);
     await this.prisma.auditEvent.create({
       data: {
         actorId: userId,

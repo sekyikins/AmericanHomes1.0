@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PaginationDto, paginationParams } from '../../common/utils/pagination';
 import { PrismaService } from '../../database/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -29,31 +29,46 @@ export class ReservationsService {
   }
 
   async requestReservation(userId: string, dto: CreateReservationDto) {
+    const variant = await this.prisma.productVariant.findUnique({
+      where: { id: dto.productVariantId },
+      include: { product: true },
+    });
+    if (!variant) {
+      throw new NotFoundException(`Product variant ${dto.productVariantId} not found`);
+    }
+    if (!variant.product.isPublished || !['NORMAL_SALE', 'DISCOUNTED_SALE'].includes(variant.product.disposition)) {
+      throw new BadRequestException('This product is not currently available for reservation');
+    }
+
     const customerId = await this.resolveCustomerProfileId(userId);
     const pendingMinutes = await this.getSettingNumber('PENDING_RESERVATION_HOLD_MINUTES', 120);
     const expiresAt = new Date(Date.now() + pendingMinutes * 60 * 1000);
     const isStaffCreated = Boolean(dto.notes?.includes('Staff-created'));
-    const reservation = await this.prisma.reservation.create({
-      data: {
-        customerId,
-        variantId: dto.productVariantId,
-        quantity: dto.quantity,
-        source: isStaffCreated ? 'WALK_IN' : 'ONLINE',
-        notes: dto.notes,
-        status: 'PENDING',
-        expiresAt,
-      },
+    const reservation = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.reservation.create({
+        data: {
+          customerId,
+          variantId: dto.productVariantId,
+          quantity: dto.quantity,
+          source: isStaffCreated ? 'WALK_IN' : 'ONLINE',
+          notes: dto.notes,
+          status: 'PENDING',
+          expiresAt,
+        },
+      });
+      await this.inventory.commitStock(
+        {
+          variantId: dto.productVariantId,
+          quantity: dto.quantity,
+          reason: 'RESERVATION_PENDING',
+          referenceType: 'RESERVATION',
+          referenceId: created.id,
+        },
+        userId,
+        tx,
+      );
+      return created;
     });
-    await this.inventory.commitStock(
-      {
-        variantId: dto.productVariantId,
-        quantity: dto.quantity,
-        reason: 'RESERVATION_PENDING',
-        referenceType: 'RESERVATION',
-        referenceId: reservation.id,
-      },
-      userId,
-    );
     await this.notifications.notifyCustomerByProfileId(
       customerId,
       'Reservation submitted',

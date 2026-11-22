@@ -36,6 +36,7 @@ export default function OrdersPage() {
   const [payOrder, setPayOrder] = useState<CustomerOrderRecord | null>(null);
   const [payChannel, setPayChannel] = useState<'paystack_momo' | 'paystack_card'>('paystack_momo');
   const [returnReason, setReturnReason] = useState('');
+  const [returnLines, setReturnLines] = useState<Record<string, number>>({});
   const [returnSubmitted, setReturnSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
@@ -104,11 +105,19 @@ export default function OrdersPage() {
   const handleReturnSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!returnOrder || !returnReason.trim() || submitting) return;
+    const lines = Object.entries(returnLines)
+      .filter(([, q]) => q > 0)
+      .map(([variantId, quantity]) => ({ variantId, quantity }));
+    if (returnOrder.lines.length > 0 && lines.length === 0) {
+      showToast('Please select at least one item to return', 'error');
+      return;
+    }
     setSubmitting(true);
     try {
       await returnsApi.create({
         orderId: returnOrder.id,
         reason: returnReason.trim(),
+        ...(lines.length > 0 ? { lines } : {}),
       });
       setReturnSubmitted(true);
       showToast(`Return request submitted for ${returnOrder.reference}`, 'success');
@@ -255,6 +264,9 @@ export default function OrdersPage() {
                           onClick={() => {
                             setReturnSubmitted(false);
                             setReturnReason('');
+                            const initLines: Record<string, number> = {};
+                            if (order.lines[0]?.variantId) initLines[order.lines[0].variantId] = 1;
+                            setReturnLines(initLines);
                             setReturnOrder(order);
                           }}
                         >
@@ -316,6 +328,21 @@ export default function OrdersPage() {
           submitted={returnSubmitted}
           reason={returnReason}
           setReason={setReturnReason}
+          selectedLines={returnLines}
+          onToggleLine={(variantId, maxQty) => {
+            setReturnLines((prev) => {
+              const cur = prev[variantId] ?? 0;
+              if (cur > 0) {
+                const next = { ...prev };
+                delete next[variantId];
+                return next;
+              }
+              return { ...prev, [variantId]: Math.min(1, maxQty) };
+            });
+          }}
+          onLineQtyChange={(variantId, qty) => {
+            setReturnLines((prev) => ({ ...prev, [variantId]: qty }));
+          }}
           submitting={submitting}
           onSubmit={handleReturnSubmit}
           onClose={() => setReturnOrder(null)}

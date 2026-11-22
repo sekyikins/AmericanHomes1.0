@@ -75,6 +75,9 @@ export function OrderReturnModal({
   submitted,
   reason,
   setReason,
+  selectedLines,
+  onToggleLine,
+  onLineQtyChange,
   submitting,
   onSubmit,
   onClose,
@@ -83,6 +86,9 @@ export function OrderReturnModal({
   submitted: boolean;
   reason: string;
   setReason: (v: string) => void;
+  selectedLines?: Record<string, number>;
+  onToggleLine?: (variantId: string, maxQty: number) => void;
+  onLineQtyChange?: (variantId: string, qty: number) => void;
   submitting: boolean;
   onSubmit: (e: FormEvent) => void;
   onClose: () => void;
@@ -135,6 +141,75 @@ export function OrderReturnModal({
                 collection.
               </p>
               <form onSubmit={onSubmit} className="login-form">
+                {order.lines && order.lines.length > 0 && selectedLines && onToggleLine && onLineQtyChange && (
+                  <div style={{ marginBottom: 14 }}>
+                    <div className="login-label" style={{ marginBottom: 6 }}>
+                      Select item(s) &amp; quantity to return
+                    </div>
+                    <div
+                      style={{
+                        border: '0.8px solid var(--line)',
+                        borderRadius: 4,
+                        padding: '8px 10px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 8,
+                        background: '#f8fafc',
+                      }}
+                    >
+                      {order.lines.map((line) => {
+                        const qtySelected = selectedLines[line.variantId] ?? 0;
+                        const checked = qtySelected > 0;
+                        return (
+                          <div
+                            key={line.variantId}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              gap: 10,
+                              fontSize: 13,
+                            }}
+                          >
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', flex: 1 }}>
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => onToggleLine(line.variantId, line.quantity)}
+                              />
+                              <span>
+                                <strong>{line.name}</strong> (Purchased: {line.quantity})
+                              </span>
+                            </label>
+                            {checked && (
+                              <input
+                                type="number"
+                                min={1}
+                                max={line.quantity}
+                                value={qtySelected}
+                                onChange={(e) =>
+                                  onLineQtyChange(
+                                    line.variantId,
+                                    Math.min(line.quantity, Math.max(1, Number(e.target.value) || 1)),
+                                  )
+                                }
+                                style={{
+                                  width: 64,
+                                  padding: '4px 8px',
+                                  border: '0.8px solid var(--line)',
+                                  borderRadius: 4,
+                                  background: '#fff',
+                                  fontSize: 13,
+                                }}
+                                aria-label={`Return quantity for ${line.name}`}
+                              />
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
                 <label className="login-label" htmlFor="return-reason">
                   Reason for return or exchange
                 </label>

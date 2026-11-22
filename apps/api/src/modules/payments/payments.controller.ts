@@ -29,7 +29,7 @@ export class PaymentsController {
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
   initialize(@Body() dto: InitializePaymentDto, @CurrentUser() user: AuthenticatedUser) {
-    return this.payments.initializePayment(dto, user.id);
+    return this.payments.initializePayment(dto, user.id, user.role);
   }
 
   @Get('verify/:reference')

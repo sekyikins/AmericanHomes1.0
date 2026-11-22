@@ -353,9 +353,22 @@ export const governanceApi = {
   createAnnouncement: (dto: { title: string; body: string }) =>
     api.post<unknown>('/governance/announcements', dto),
   listPolls: () => api.get<Record<string, unknown>[]>('/governance/polls'),
+  listCustomerPolls: () => api.get<Record<string, unknown>[]>('/governance/polls/customer'),
+  createPoll: (dto: { title: string; description?: string; closesAt?: string }) =>
+    api.post<Record<string, unknown>>('/governance/polls', dto),
+  closePoll: (id: string) => api.post<Record<string, unknown>>(`/governance/polls/${id}/close`, {}),
   votePoll: (id: string, choice = 'YES') =>
     api.post<unknown>(`/governance/polls/${id}/vote`, { choice }),
   listSettings: () => api.get<Record<string, unknown>[]>('/governance/settings'),
+  getPaymentAccounts: () =>
+    api.get<{
+      momoNetwork: string;
+      momoNumber: string;
+      momoName: string;
+      bankName: string;
+      bankAccountNumber: string;
+      bankAccountName: string;
+    }>('/governance/payment-accounts'),
   updateSetting: (key: string, value: string) =>
     api.patch<unknown>(`/governance/settings/${key}`, { value }),
   uploadFile: (dto: { folder: string; filename: string; mimetype: string; base64: string }) =>

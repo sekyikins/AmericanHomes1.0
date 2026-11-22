@@ -199,7 +199,9 @@ export function mapApiProductToCatalog(raw: Record<string, unknown>): CatalogPro
           }))
         : [{ name: 'Standard', swatch: '#166a4a' }],
     brand: String(raw.brand || 'American import'),
-    condition: 'Inspected · Ready for collection',
+    condition: raw.condition
+      ? String(raw.condition).charAt(0).toUpperCase() + String(raw.condition).slice(1).toLowerCase()
+      : 'Good',
     sourceBatch: 'Tema Warehouse',
     defectsNote: String(raw.defectDisclosures || 'No disclosed defects.'),
     defectDisclosures: raw.defectDisclosures ? String(raw.defectDisclosures) : null,

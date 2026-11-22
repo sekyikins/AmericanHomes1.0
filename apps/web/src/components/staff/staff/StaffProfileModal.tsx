@@ -15,6 +15,8 @@ interface StaffProfileModalProps {
   status: 'Active' | 'Inactive';
   availableGroups: string[];
   selectedGroups: string[];
+  restrictFinancials?: boolean;
+  canRestrictFinancials?: boolean;
   saving: boolean;
   onFullNameChange: (value: string) => void;
   onPhoneChange: (value: string) => void;
@@ -23,6 +25,7 @@ interface StaffProfileModalProps {
   onJobTitleChange: (value: string) => void;
   onStatusChange: (value: 'Active' | 'Inactive') => void;
   onToggleGroup: (group: string) => void;
+  onRestrictFinancialsChange?: (value: boolean) => void;
   onSubmit: (e: FormEvent) => void;
   onClose: () => void;
 }
@@ -37,6 +40,8 @@ export function StaffProfileModal({
   status,
   availableGroups,
   selectedGroups,
+  restrictFinancials = false,
+  canRestrictFinancials = false,
   saving,
   onFullNameChange,
   onPhoneChange,
@@ -45,6 +50,7 @@ export function StaffProfileModal({
   onJobTitleChange,
   onStatusChange,
   onToggleGroup,
+  onRestrictFinancialsChange,
   onSubmit,
   onClose,
 }: StaffProfileModalProps) {
@@ -204,6 +210,31 @@ export function StaffProfileModal({
             ))}
           </div>
         </div>
+
+        {canRestrictFinancials && onRestrictFinancialsChange && (
+          <div className="req-field" style={{ marginTop: 12 }}>
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                fontSize: 13,
+                color: 'var(--ink)',
+                cursor: 'pointer',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={restrictFinancials}
+                onChange={(e) => onRestrictFinancialsChange(e.target.checked)}
+                style={{ width: 15, height: 15, accentColor: 'var(--green)' }}
+              />
+              <span>
+                <strong>Restrict financial visibility</strong> (hide reports, expenses &amp; payment totals)
+              </span>
+            </label>
+          </div>
+        )}
 
         <div className="request-info-banner" style={{ marginTop: 14 }}>
           <Info size={16} style={{ flexShrink: 0, marginTop: 1 }} />

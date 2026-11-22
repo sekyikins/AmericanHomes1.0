@@ -37,6 +37,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { ConfirmDialog } from '@/components/ui';
 import { StaffAccountModal } from '@/components/staff/StaffAccountModal';
 import { StaffLoginCard } from '@/components/staff/StaffLoginCard';
+import { DashboardSkeleton } from '@/components/ui';
 import { notificationsApi } from '@/lib/api';
 import { hasStaffPermission } from '@/lib/permissionCatalog';
 import { useToast } from '@/providers/toast.provider';
@@ -76,6 +77,7 @@ const NAV_SECTIONS: NavSection[] = [
       { label: 'Product requests', href: '/staff/product-requests', Icon: FileText, permission: 'product_requests.view' },
       { label: 'Sourcing', href: '/staff/sourcing', Icon: Search, permission: 'sourcing.manage' },
       { label: 'Allocations', href: '/staff/allocations', Icon: Users, permission: 'allocations.manage' },
+      { label: 'Product polls', href: '/staff/notifications?tab=polls', Icon: BarChart2, permission: 'product_requests.review' },
     ],
   },
   {
@@ -222,13 +224,10 @@ export function AdminShell({ children }: { children: ReactNode }) {
         style={{
           minHeight: '100vh',
           background: 'var(--canvas)',
-          display: 'grid',
-          placeItems: 'center',
-          color: 'var(--muted)',
-          fontSize: 13,
+          padding: 28,
         }}
       >
-        Loading workspace…
+        <DashboardSkeleton />
       </main>
     );
   }

@@ -53,8 +53,21 @@ export class ReservationExpiryJob {
       });
       if (updated.count === 0) continue;
 
-      if (session.holdId) {
-        const hold = await this.prisma.stockHold.findUnique({ where: { id: session.holdId } });
+      const holdIdsToRelease = new Set<string>();
+      if (session.holdId) holdIdsToRelease.add(session.holdId);
+      if (session.orderId) {
+        const orderHolds = await this.prisma.stockHold.findMany({
+          where: {
+            referenceType: { in: ['ORDER', 'CHECKOUT_ORDER'] },
+            referenceId: session.orderId,
+            status: 'ACTIVE',
+          },
+          select: { id: true },
+        });
+        for (const h of orderHolds) holdIdsToRelease.add(h.id);
+      }
+      for (const holdId of holdIdsToRelease) {
+        const hold = await this.prisma.stockHold.findUnique({ where: { id: holdId } });
         if (hold && hold.status === 'ACTIVE') {
           await this.inventory.releaseHold(hold.id, 'SYSTEM_CHECKOUT_EXPIRY');
         }
@@ -67,6 +80,12 @@ export class ReservationExpiryJob {
         `Expired ${expiredReservations} reservation(s) and ${expiredCheckouts} checkout session(s)`,
       );
     }
+
+    await this.prisma.productPoll.updateMany({
+      where: { status: 'OPEN', closesAt: { lte: now } },
+      data: { status: 'CLOSED' },
+    });
+
     return { expiredReservations, expiredCheckouts };
   }
 }

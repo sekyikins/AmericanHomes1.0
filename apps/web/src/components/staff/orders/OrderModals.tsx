@@ -1,8 +1,8 @@
 'use client';
 
 import { StaffModal } from '@/components/staff/StaffModal';
-import { Button } from '@/components/ui';
-import { ArrowRight, Info, Plus, ShieldCheck, Trash2 } from 'lucide-react';
+import { Button, SearchableSelect } from '@/components/ui';
+import { ArrowRight, CreditCard, Info, Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import type { FormEvent } from 'react';
 
 export interface OrderDraftLine {
@@ -22,6 +22,7 @@ interface OrderRecordModalProps {
   modalMode: 'create' | 'edit' | null;
   orderReference?: string;
   isCancelled?: boolean;
+  canMakePayment?: boolean;
   editingId: string | null;
   customerLookup: string;
   variants: OrderVariantOption[];
@@ -37,6 +38,7 @@ interface OrderRecordModalProps {
   onChangeLineQty: (id: string, quantity: number) => void;
   onChangeLinePrice: (id: string, agreedPrice: string) => void;
   onCancelOrderClick: () => void;
+  onMakePayment?: () => void;
   onSubmit: (e: FormEvent) => void;
   onClose: () => void;
 }
@@ -45,6 +47,7 @@ export function OrderRecordModal({
   modalMode,
   orderReference,
   isCancelled = false,
+  canMakePayment = false,
   editingId,
   customerLookup,
   variants,
@@ -60,6 +63,7 @@ export function OrderRecordModal({
   onChangeLineQty,
   onChangeLinePrice,
   onCancelOrderClick,
+  onMakePayment,
   onSubmit,
   onClose,
 }: OrderRecordModalProps) {
@@ -132,25 +136,20 @@ export function OrderRecordModal({
                 }}
               >
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <select
-                    aria-label="Product variant"
-                    value={line.variantId}
-                    onChange={(e) => onChangeLineVariant(line.id, e.target.value)}
-                    style={{
-                      flex: 1,
-                      height: 40,
-                      border: '0.8px solid var(--line)',
-                      padding: '0 10px',
-                      background: '#fff',
-                      fontSize: 12.5,
-                    }}
-                  >
-                    {variants.map((v) => (
-                      <option key={v.id} value={v.id}>
-                        {v.label}
-                      </option>
-                    ))}
-                  </select>
+                  <div style={{ flex: 1 }}>
+                    <SearchableSelect
+                      ariaLabel="Product variant"
+                      options={variants.map((v) => ({
+                        value: v.id,
+                        label: v.label,
+                        searchText: v.label,
+                      }))}
+                      value={line.variantId}
+                      onChange={(nextId) => onChangeLineVariant(line.id, nextId)}
+                      placeholder="Search product or SKU…"
+                      searchPlaceholder="Type product name or SKU…"
+                    />
+                  </div>
                   {draftLines.length > 1 && (
                     <button
                       type="button"
@@ -255,14 +254,26 @@ export function OrderRecordModal({
           }}
         >
           {modalMode === 'edit' && editingId && !isCancelled && (
-            <Button
-              type="button"
-              variant="secondary"
-              disabled={cancellingOrder}
-              onClick={onCancelOrderClick}
-            >
-              Cancel order
-            </Button>
+            <div style={{ display: 'flex', gap: 10, width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={cancellingOrder}
+                onClick={onCancelOrderClick}
+              >
+                Cancel order
+              </Button>
+              {canMakePayment && onMakePayment && (
+                <Button
+                  type="button"
+                  variant="primary"
+                  onClick={onMakePayment}
+                >
+                  <CreditCard size={15} />
+                  <span>Make payment</span>
+                </Button>
+              )}
+            </div>
           )}
           {modalMode === 'create' && (
             <Button

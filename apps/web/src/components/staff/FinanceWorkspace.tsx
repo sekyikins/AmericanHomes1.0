@@ -89,7 +89,7 @@ export function FinanceWorkspace({ mode }: { mode: 'reports' | 'expenses' }) {
         (Array.isArray(expJobs) ? expJobs : []).slice(0, 8).map((j: Record<string, unknown>) => ({
           id: String(j.id),
           type: String(j.type || 'EXPORT'),
-          format: String(j.format || 'CSV'),
+          format: (String(j.type || '').includes(':') ? String(j.type).split(':')[1] : String(j.format || 'CSV')).toUpperCase(),
           createdAt: j.createdAt ? new Date(String(j.createdAt)).toLocaleString('en-GH') : 'Recent',
         })),
       );

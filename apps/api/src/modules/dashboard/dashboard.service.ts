@@ -3,9 +3,17 @@ import { PrismaService } from '../../database/prisma.service';
 
 @Injectable()
 export class DashboardService {
+  private readonly summaryCache = new Map<string, { expiresAt: number; data: unknown }>();
+  private static readonly CACHE_TTL_MS = 30_000;
+
   constructor(private readonly prisma: PrismaService) {}
 
   async getSummary(restrictFinancials = false) {
+    const cacheKey = restrictFinancials ? 'restricted' : 'full';
+    const cached = this.summaryCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.data;
+    }
     const now = new Date();
     const startOf7d = new Date(now);
     startOf7d.setDate(now.getDate() - 6);
@@ -269,7 +277,7 @@ export class DashboardService {
       0,
     );
 
-    return {
+    const result = {
       availableInventory: inventoryLots._sum.available ?? 0,
       heldInventory: inventoryLots._sum.held ?? 0,
       unavailableInventory: inventoryLots._sum.unavailable ?? 0,
@@ -293,5 +301,10 @@ export class DashboardService {
         failedInspectionCount: failedLotsCount,
       },
     };
+    this.summaryCache.set(cacheKey, {
+      expiresAt: Date.now() + DashboardService.CACHE_TTL_MS,
+      data: result,
+    });
+    return result;
   }
 }

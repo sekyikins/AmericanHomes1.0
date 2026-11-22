@@ -14,14 +14,17 @@ function RequestProductContent() {
   const { showToast } = useToast();
   const searchParams = useSearchParams();
   const [productName, setProductName] = useState(() => searchParams.get('product') ?? '');
+  const [category, setCategory] = useState('Living room');
   const [description, setDescription] = useState('');
   const [quantity, setQuantity] = useState('1');
   const [budget, setBudget] = useState(() => searchParams.get('budget') ?? '');
+  const [referenceUrl, setReferenceUrl] = useState('');
   const [notes, setNotes] = useState('');
   const [fileName, setFileName] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [acknowledged, setAcknowledged] = useState(false);
   const [submittedRef, setSubmittedRef] = useState<string | null>(null);
+  const [submittedAt, setSubmittedAt] = useState<string>('');
   const [submitting, setSubmitting] = useState(false);
 
   const isDirty = Boolean(
@@ -69,14 +72,17 @@ function RequestProductContent() {
     try {
       const res = (await requestsApi.submit({
         productName: productName.trim(),
+        category,
         description: description.trim(),
         quantity: Number(quantity) || 1,
         ...(Number.isFinite(parsedBudget) && parsedBudget > 0
           ? { budgetCents: Math.round(parsedBudget * 100) }
           : {}),
+        ...(referenceUrl.trim() ? { referenceUrl: referenceUrl.trim() } : {}),
         notes: notes.trim() || undefined,
       })) as { id?: string } | null;
       setSubmittedRef(res?.id ?? 'SUBMITTED');
+      setSubmittedAt(new Date().toLocaleString('en-GH', { dateStyle: 'medium', timeStyle: 'short' }));
       showToast('Product request submitted', 'success');
     } catch (err) {
       const msg =
@@ -115,7 +121,7 @@ function RequestProductContent() {
               </span>
               <div>
                 <strong>Submitted</strong>
-                <small>Today, 10:42 AM</small>
+                <small>{submittedAt || 'Just now'}</small>
               </div>
             </div>
 
@@ -197,6 +203,40 @@ function RequestProductContent() {
             onChange={(e) => setProductName(e.target.value)}
             placeholder="e.g. KitchenAid stand mixer"
           />
+        </div>
+
+        <div className="req-row-2">
+          <div className="req-field">
+            <label htmlFor="req-category">
+              <strong>Category</strong>
+            </label>
+            <select
+              id="req-category"
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+            >
+              <option value="Living room">Living room</option>
+              <option value="Kitchen">Kitchen</option>
+              <option value="Office">Office</option>
+              <option value="Outdoors">Outdoors</option>
+              <option value="Dining">Dining</option>
+              <option value="Electronics">Electronics</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+
+          <div className="req-field">
+            <label htmlFor="req-url">
+              <strong>Marketplace / reference URL (optional)</strong>
+            </label>
+            <input
+              id="req-url"
+              type="url"
+              value={referenceUrl}
+              onChange={(e) => setReferenceUrl(e.target.value)}
+              placeholder="https://www.amazon.com/..."
+            />
+          </div>
         </div>
 
         <div className="req-field">

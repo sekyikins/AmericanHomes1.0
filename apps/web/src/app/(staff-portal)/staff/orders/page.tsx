@@ -12,6 +12,7 @@ import {
   Plus,
   Search,
 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 
 type OrderRow = {
@@ -33,6 +34,7 @@ type OrderRow = {
 type VariantOpt = { id: string; label: string; priceCents: number };
 
 export default function StaffOrdersPage() {
+  const router = useRouter();
   const { showToast } = useToast();
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [variants, setVariants] = useState<VariantOpt[]>([]);
@@ -353,6 +355,9 @@ export default function StaffOrdersPage() {
         modalMode={modalMode}
         orderReference={orders.find((o) => o.id === editingId)?.reference}
         isCancelled={orders.find((o) => o.id === editingId)?.collection === 'Cancelled'}
+        canMakePayment={['PENDING', 'PARTIAL', 'PARTIALLY_PAID'].includes(
+          (orders.find((o) => o.id === editingId)?.payment ?? '').toUpperCase(),
+        )}
         editingId={editingId}
         customerLookup={customerLookup}
         variants={variants}
@@ -398,6 +403,12 @@ export default function StaffOrdersPage() {
           setDraftLines((prev) => prev.map((r) => (r.id === id ? { ...r, agreedPrice: price } : r)))
         }
         onCancelOrderClick={() => setConfirmCancelOrder(true)}
+        onMakePayment={() => {
+          if (editingId) {
+            setModalMode(null);
+            router.push(`/staff/payments?recordOrderId=${encodeURIComponent(editingId)}`);
+          }
+        }}
         onSubmit={handleSubmit}
         onClose={() => setModalMode(null)}
       />

@@ -69,15 +69,87 @@ export class GovernanceService {
   }
 
   // --- Product Polls (FR-POL-001) ---
-  listPolls() {
-    return this.prisma.productPoll.findMany({
-      include: { _count: { select: { votes: true } } },
+  private async notifyAllCustomers(title: string, body: string, referenceId: string) {
+    const customers = await this.prisma.customerProfile.findMany({
+      select: { userId: true },
+    });
+    if (customers.length > 0) {
+      await this.prisma.notificationMessage.createMany({
+        data: customers.map((c) => ({
+          userId: c.userId,
+          type: 'PROMOTIONS',
+          referenceId,
+          title,
+          body,
+        })),
+      });
+    }
+  }
+
+  private async closeExpiredPolls() {
+    const now = new Date();
+    const expired = await this.prisma.productPoll.findMany({
+      where: { status: 'OPEN', closesAt: { lte: now } },
+      select: { id: true, title: true },
+    });
+    if (expired.length === 0) return;
+
+    await this.prisma.productPoll.updateMany({
+      where: { id: { in: expired.map((p) => p.id) }, status: 'OPEN' },
+      data: { status: 'CLOSED' },
+    });
+
+    for (const poll of expired) {
+      await this.audit.record({
+        action: 'POLL_AUTO_CLOSED',
+        entityType: 'ProductPoll',
+        entityId: poll.id,
+        after: { title: poll.title },
+      });
+      await this.notifyAllCustomers(
+        'Product poll closed',
+        `The poll "${poll.title}" has closed.`,
+        poll.id,
+      );
+    }
+  }
+
+  async listPolls(userId?: string, activeOnly = false) {
+    await this.closeExpiredPolls();
+    const polls = await this.prisma.productPoll.findMany({
+      where: activeOnly ? { status: 'OPEN' } : undefined,
+      include: {
+        _count: { select: { votes: true } },
+        votes: {
+          select: {
+            choice: true,
+            customer: { select: { userId: true } },
+          },
+        },
+      },
       orderBy: { createdAt: 'desc' },
+    });
+    return polls.map((p) => {
+      const yesVotes = p.votes.filter((v) => v.choice.toUpperCase() === 'YES').length;
+      const noVotes = p.votes.filter((v) => v.choice.toUpperCase() === 'NO').length;
+      const myVote = userId ? p.votes.find((v) => v.customer?.userId === userId) : undefined;
+      return {
+        id: p.id,
+        title: p.title,
+        description: p.description,
+        status: p.status,
+        closesAt: p.closesAt,
+        createdAt: p.createdAt,
+        _count: p._count,
+        yesVotes,
+        noVotes,
+        myChoice: myVote ? myVote.choice : null,
+      };
     });
   }
 
-  createPoll(staffId: string, dto: { title: string; description?: string; closesAt?: string }) {
-    return this.prisma.productPoll.create({
+  async createPoll(staffId: string, dto: { title: string; description?: string; closesAt?: string }) {
+    const poll = await this.prisma.productPoll.create({
       data: {
         title: dto.title,
         description: dto.description,
@@ -86,9 +158,45 @@ export class GovernanceService {
         createdBy: staffId,
       },
     });
+    await this.audit.record({
+      actorId: staffId,
+      action: 'POLL_CREATED',
+      entityType: 'ProductPoll',
+      entityId: poll.id,
+      after: { title: dto.title, closesAt: dto.closesAt ?? null },
+    });
+    const closesNote = poll.closesAt
+      ? ` Closes ${poll.closesAt.toLocaleString('en-GH', { dateStyle: 'medium', timeStyle: 'short' })}.`
+      : '';
+    await this.notifyAllCustomers(
+      'New product poll',
+      `Have your say: "${dto.title}". Vote now in your account polls.${closesNote}`,
+      poll.id,
+    );
+    return poll;
+  }
+
+  async closePoll(pollId: string, staffId: string) {
+    const poll = await this.prisma.productPoll.update({
+      where: { id: pollId },
+      data: { status: 'CLOSED' },
+    });
+    await this.audit.record({
+      actorId: staffId,
+      action: 'POLL_CLOSED',
+      entityType: 'ProductPoll',
+      entityId: pollId,
+    });
+    await this.notifyAllCustomers(
+      'Product poll closed',
+      `The poll "${poll.title}" has closed.`,
+      poll.id,
+    );
+    return poll;
   }
 
   async votePoll(pollId: string, userId: string, choice = 'YES') {
+    await this.closeExpiredPolls();
     const poll = await this.prisma.productPoll.findUnique({ where: { id: pollId } });
     if (!poll || poll.status !== 'OPEN') {
       throw new BadRequestException('Poll is not open for voting');
@@ -102,6 +210,29 @@ export class GovernanceService {
       update: { choice },
       create: { pollId, customerId: profile.id, choice },
     });
+  }
+
+  async getPaymentAccounts() {
+    const keys = [
+      'MOMO_NETWORK',
+      'MOMO_ACCOUNT_NUMBER',
+      'MOMO_ACCOUNT_NAME',
+      'BANK_NAME',
+      'BANK_ACCOUNT_NUMBER',
+      'BANK_ACCOUNT_NAME',
+    ];
+    const rows = await this.prisma.systemSetting.findMany({
+      where: { key: { in: keys } },
+    });
+    const map = new Map(rows.map((r) => [r.key, r.value]));
+    return {
+      momoNetwork: map.get('MOMO_NETWORK') ?? 'MTN Mobile Money',
+      momoNumber: map.get('MOMO_ACCOUNT_NUMBER') ?? 'Not configured',
+      momoName: map.get('MOMO_ACCOUNT_NAME') ?? 'AmericanHomes Ltd',
+      bankName: map.get('BANK_NAME') ?? 'Not configured',
+      bankAccountNumber: map.get('BANK_ACCOUNT_NUMBER') ?? 'Not configured',
+      bankAccountName: map.get('BANK_ACCOUNT_NAME') ?? 'AmericanHomes Ltd',
+    };
   }
 
   // --- System Settings (Configurable Rules) ---

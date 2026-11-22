@@ -1,7 +1,7 @@
 'use client';
 
 import { StaffModal } from '@/components/staff/StaffModal';
-import { Button } from '@/components/ui';
+import { Button, SearchableSelect } from '@/components/ui';
 import { ArrowRight, Info, ShieldCheck } from 'lucide-react';
 import type { FormEvent } from 'react';
 
@@ -49,20 +49,20 @@ export function CreateReturnModal({
       <div className="ship-eyebrow">RETURNS</div>
       <h2 style={{ marginTop: 6 }}>Create return case</h2>
       <form onSubmit={onSubmit}>
-        <label className="login-field">
+        <div className="login-field">
           <span>Original order</span>
-          <select
-            className="staff-field-select"
+          <SearchableSelect
+            options={orders.map((o) => ({
+              value: o.id,
+              label: `${o.reference} · ${o.customer}`,
+              searchText: `${o.reference} ${o.customer}`,
+            }))}
             value={orderId}
-            onChange={(e) => onOrderIdChange(e.target.value)}
-          >
-            {orders.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.reference} · {o.customer}
-              </option>
-            ))}
-          </select>
-        </label>
+            onChange={onOrderIdChange}
+            placeholder="Search order by reference or customer…"
+            searchPlaceholder="Type order ref or customer name…"
+          />
+        </div>
         <label className="login-field">
           <span>Return reason</span>
           <textarea

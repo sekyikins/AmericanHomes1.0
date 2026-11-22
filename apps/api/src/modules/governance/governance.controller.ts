@@ -84,6 +84,13 @@ export class GovernanceController {
     return this.gov.listPolls();
   }
 
+  @Get('polls/customer')
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  listCustomerPolls(@CurrentUser() user: AuthenticatedUser) {
+    return this.gov.listPolls(user.id, true);
+  }
+
   @Post('polls')
   @ApiBearerAuth()
   @UseGuards(AuthGuard, PermissionsGuard)
@@ -95,6 +102,14 @@ export class GovernanceController {
     return this.gov.createPoll(user.id, dto);
   }
 
+  @Post('polls/:id/close')
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission(PERMISSIONS.REQUESTS.REVIEW)
+  closePoll(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.gov.closePoll(id, user.id);
+  }
+
   @Post('polls/:id/vote')
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
@@ -104,6 +119,14 @@ export class GovernanceController {
     @Body('choice') choice = 'YES',
   ) {
     return this.gov.votePoll(id, user.id, choice);
+  }
+
+  @Get('payment-accounts')
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission(PERMISSIONS.PAYMENTS.RECORD_MANUAL)
+  getPaymentAccounts() {
+    return this.gov.getPaymentAccounts();
   }
 
   @Get('settings')
