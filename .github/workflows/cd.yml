@@ -1,0 +1,65 @@
+name: CD
+
+on:
+  workflow_run:
+    workflows: ['CI']
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: cd-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy Production
+    runs-on: ubuntu-latest
+    environment: production
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        if: ${{ secrets.DATABASE_URL != '' }}
+        run: pnpm install --frozen-lockfile
+
+      - name: Run Prisma database migrations
+        if: ${{ secrets.DATABASE_URL != '' }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+        run: pnpm exec prisma migrate deploy --schema=prisma/schema.prisma
+
+      - name: Trigger API deployment hook
+        if: ${{ secrets.API_DEPLOY_HOOK_URL != '' }}
+        env:
+          API_DEPLOY_HOOK_URL: ${{ secrets.API_DEPLOY_HOOK_URL }}
+        run: curl -fsSL -X POST "$API_DEPLOY_HOOK_URL"
+
+      - name: Trigger Web deployment hook
+        if: ${{ secrets.WEB_DEPLOY_HOOK_URL != '' }}
+        env:
+          WEB_DEPLOY_HOOK_URL: ${{ secrets.WEB_DEPLOY_HOOK_URL }}
+        run: curl -fsSL -X POST "$WEB_DEPLOY_HOOK_URL"
+
+      - name: Verify API health endpoint
+        if: ${{ vars.API_HEALTH_URL != '' }}
+        env:
+          API_HEALTH_URL: ${{ vars.API_HEALTH_URL }}
+        run: curl -fsSL "$API_HEALTH_URL"
