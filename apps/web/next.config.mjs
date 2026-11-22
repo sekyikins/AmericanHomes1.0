@@ -1,13 +1,22 @@
 /** @type {import('next').NextConfig} */
 const isProduction = process.env.NODE_ENV === 'production';
 
+let apiOrigin = 'http://localhost:3001';
+try {
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    apiOrigin = new URL(process.env.NEXT_PUBLIC_API_URL).origin;
+  }
+} catch {
+  // fallback to default
+}
+
 const cspDirectives = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.paystack.co",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https://*.supabase.co https://images.unsplash.com",
   "font-src 'self' data:",
-  "connect-src 'self' http://localhost:3001 https://*.supabase.co https://api.paystack.co",
+  `connect-src 'self' ${apiOrigin} https://*.onrender.com https://*.supabase.co https://api.paystack.co`,
   "frame-src 'self' https://checkout.paystack.com",
   "frame-ancestors 'none'",
   "base-uri 'self'",

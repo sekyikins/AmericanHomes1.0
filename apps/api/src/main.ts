@@ -29,7 +29,7 @@ async function bootstrap() {
 
   const origins = (process.env.CORS_ORIGINS ?? 'http://localhost:3000')
     .split(',')
-    .map((o) => o.trim())
+    .map((o) => o.trim().replace(/\/+$/, ''))
     .filter(Boolean);
   app.enableCors({
     origin: origins,

@@ -92,11 +92,12 @@ export class CsrfOriginMiddleware implements NestMiddleware {
     const originHeader = req.headers.origin;
     const origin = Array.isArray(originHeader) ? originHeader[0] : originHeader;
     if (origin) {
+      const normalizedOrigin = origin.trim().replace(/\/+$/, '');
       const allowed = (process.env.CORS_ORIGINS ?? 'http://localhost:3000')
         .split(',')
-        .map((o) => o.trim())
+        .map((o) => o.trim().replace(/\/+$/, ''))
         .filter(Boolean);
-      if (!allowed.includes(origin)) {
+      if (!allowed.includes(normalizedOrigin)) {
         this.logger.warn(
           `[SECURITY] Blocked cross-origin ${method} ${req.originalUrl} origin=${origin} ip=${extractClientIp(req)}`,
         );
