@@ -1,9 +1,23 @@
 'use client';
 
 import { StaffProfileModal } from '@/components/staff/staff/StaffProfileModal';
+import {
+  ActiveFilterChips,
+  HierarchicalFilterDropdown,
+  SortableHeader,
+} from '@/components/staff/TableControls';
 import { ConfirmDialog, EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
 import { permissionsApi, staffApi } from '@/lib/api';
 import { downloadCsv } from '@/lib/staffUtils';
+import {
+  applyFiltersAndSort,
+  cycleSort,
+  deriveFilterCategories,
+  type FilterCategoryDef,
+  type FilterValueMap,
+  type SortColumnDef,
+  type SortState,
+} from '@/lib/tableUtils';
 import { useToast } from '@/providers/toast.provider';
 import { useAuth } from '@/store/auth.store';
 import {
@@ -13,7 +27,7 @@ import {
   Search,
   ShieldCheck,
 } from 'lucide-react';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 
 type StaffMember = {
   id: string;
@@ -39,6 +53,8 @@ export default function StaffAccountsPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [groupMap, setGroupMap] = useState<Record<string, string>>({});
   const [search, setSearch] = useState('');
+  const [filters, setFilters] = useState<FilterValueMap>({});
+  const [sort, setSort] = useState<SortState>(null);
   const [modalMode, setModalMode] = useState<'create' | 'edit' | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -115,15 +131,46 @@ export default function StaffAccountsPage() {
     fetchStaff();
   }, []);
 
-  const visible = staff.filter((member) => {
-    if (!search.trim()) return true;
-    const q = search.toLowerCase();
-    return (
-      member.name.toLowerCase().includes(q) ||
-      member.phone.toLowerCase().includes(q) ||
-      member.jobTitle.toLowerCase().includes(q)
-    );
-  });
+  const filterDefs: FilterCategoryDef<StaffMember>[] = useMemo(
+    () => [
+      { key: 'status', label: 'Status', accessor: (m) => m.status },
+      { key: 'role', label: 'Role', accessor: (m) => m.jobTitle },
+      { key: 'access', label: 'Access', accessor: (m) => m.accessLabel },
+    ],
+    [],
+  );
+
+  const sortDefs: SortColumnDef<StaffMember>[] = useMemo(
+    () => [
+      { key: 'name', type: 'string', accessor: (m) => m.name },
+      { key: 'jobTitle', type: 'string', accessor: (m) => m.jobTitle },
+      {
+        key: 'status',
+        type: 'status',
+        statusOrder: ['Active', 'Inactive'],
+        accessor: (m) => m.status,
+      },
+      { key: 'details', type: 'string', accessor: (m) => m.details },
+    ],
+    [],
+  );
+
+  const filterCategories = useMemo(() => deriveFilterCategories(staff, filterDefs), [staff, filterDefs]);
+
+  const visible = useMemo(() => {
+    const searched = staff.filter((member) => {
+      if (!search.trim()) return true;
+      const q = search.toLowerCase();
+      return (
+        member.name.toLowerCase().includes(q) ||
+        member.phone.toLowerCase().includes(q) ||
+        member.jobTitle.toLowerCase().includes(q)
+      );
+    });
+    return applyFiltersAndSort(searched, filters, filterDefs, sort, sortDefs);
+  }, [staff, search, filters, filterDefs, sort, sortDefs]);
+
+  const hasActiveFilters = Object.values(filters).some((vals) => vals && vals.length > 0);
 
   const openCreate = () => {
     setModalMode('create');
@@ -288,6 +335,11 @@ export default function StaffAccountsPage() {
             aria-label="Search staff accounts"
           />
         </label>
+        <HierarchicalFilterDropdown
+          categories={filterCategories}
+          selected={filters}
+          onChange={setFilters}
+        />
         <button
           type="button"
           className="button"
@@ -305,12 +357,18 @@ export default function StaffAccountsPage() {
         </button>
       </div>
 
+      <ActiveFilterChips
+        categories={filterCategories}
+        selected={filters}
+        onChange={setFilters}
+      />
+
       <section className="acct-panel" style={{ padding: 0 }}>
         <div className="staff-table-head staff-perm-cols">
-          <span>NAME / REFERENCE</span>
-          <span>ROLE / TYPE</span>
-          <span>ACCESS / STATUS</span>
-          <span>DETAILS</span>
+          <SortableHeader label="NAME / REFERENCE" sortKey="name" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="ROLE / TYPE" sortKey="jobTitle" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="ACCESS / STATUS" sortKey="status" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="DETAILS" sortKey="details" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
           <span />
         </div>
 
@@ -325,13 +383,16 @@ export default function StaffAccountsPage() {
             title="No staff accounts match"
             description="Adjust your search term or clear filters to see all staff accounts."
             action={
-              search.trim() ? (
+              search.trim() || hasActiveFilters ? (
                 <button
                   type="button"
                   className="button"
-                  onClick={() => setSearch('')}
+                  onClick={() => {
+                    setSearch('');
+                    setFilters({});
+                  }}
                 >
-                  Clear search
+                  Clear filters
                 </button>
               ) : undefined
             }

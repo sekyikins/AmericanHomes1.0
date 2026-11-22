@@ -18,6 +18,9 @@ export class PaystackService {
     metadata?: Record<string, unknown>,
   ) {
     if (!this.secretKey) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('PAYSTACK_SECRET_KEY is required in production');
+      }
       this.logger.log(`initializeTransaction stub email=${email} amount=${amountPesewas}`);
       return { authorizationUrl: 'stub', reference: `PAY-${Date.now()}`, metadata };
     }
@@ -54,8 +57,11 @@ export class PaystackService {
 
   async verifyTransaction(reference: string) {
     if (!this.secretKey) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('PAYSTACK_SECRET_KEY is required in production');
+      }
       this.logger.log(`verifyTransaction stub reference=${reference}`);
-      return { status: 'success', reference, amountPesewas: 0 };
+      return { status: 'success', reference, amountPesewas: 0, currency: 'GHS', isStub: true };
     }
 
     const res = await fetch(
@@ -66,12 +72,14 @@ export class PaystackService {
     );
     const json = (await res.json()) as {
       status: boolean;
-      data?: { status: string; reference: string; amount: number };
+      data?: { status: string; reference: string; amount: number; currency?: string };
     };
     return {
       status: json.data?.status ?? 'failed',
       reference: json.data?.reference ?? reference,
       amountPesewas: json.data?.amount ?? 0,
+      currency: json.data?.currency ?? 'GHS',
+      isStub: false,
     };
   }
 

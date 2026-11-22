@@ -1,6 +1,10 @@
 'use client';
 
-import { StaffFilterDropdown } from '@/components/staff/StaffFilterDropdown';
+import {
+  ActiveFilterChips,
+  HierarchicalFilterDropdown,
+  SortableHeader,
+} from '@/components/staff/TableControls';
 import {
   StockActionModal,
   StockLedgerModal,
@@ -8,6 +12,15 @@ import {
 import { ConfirmDialog, EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
 import { inventoryApi, stocktakesApi } from '@/lib/api';
 import { downloadCsv } from '@/lib/staffUtils';
+import {
+  applyFiltersAndSort,
+  cycleSort,
+  deriveFilterCategories,
+  type FilterCategoryDef,
+  type FilterValueMap,
+  type SortColumnDef,
+  type SortState,
+} from '@/lib/tableUtils';
 import { useToast } from '@/providers/toast.provider';
 import {
   AlertTriangle,
@@ -18,7 +31,7 @@ import {
   Plus,
   Search,
 } from 'lucide-react';
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 
 type InventoryRow = {
   id: string;
@@ -60,7 +73,8 @@ export function StockWorkspace({ mode }: { mode: 'inventory' | 'stocktakes' }) {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [search, setSearch] = useState('');
-  const [availabilityFilter, setAvailabilityFilter] = useState<'All' | 'Has held' | 'All available'>('All');
+  const [filters, setFilters] = useState<FilterValueMap>({});
+  const [sort, setSort] = useState<SortState>(null);
   const [modalOpen, setModalOpen] = useState<'adjustment' | 'stocktake' | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -150,17 +164,54 @@ export function StockWorkspace({ mode }: { mode: 'inventory' | 'stocktakes' }) {
     }
   };
 
-  const visible = rows.filter((item) => {
-    if (availabilityFilter === 'Has held' && item.held === 0) return false;
-    if (availabilityFilter === 'All available' && item.held > 0) return false;
-    if (!search.trim()) return true;
-    const q = search.toLowerCase();
-    return (
-      item.product.toLowerCase().includes(q) ||
-      item.variant.toLowerCase().includes(q) ||
-      item.identifier.toLowerCase().includes(q)
-    );
-  });
+  const filterDefs: FilterCategoryDef<InventoryRow>[] = useMemo(
+    () => [
+      { key: 'status', label: 'Status', accessor: (r) => r.status },
+      { key: 'condition', label: 'Condition', accessor: (r) => r.condition },
+      {
+        key: 'stockPool',
+        label: 'Stock pool',
+        accessor: (r) => (r.held > 0 ? 'Has held' : 'All available'),
+      },
+    ],
+    [],
+  );
+
+  const sortDefs: SortColumnDef<InventoryRow>[] = useMemo(
+    () => [
+      { key: 'product', type: 'string', accessor: (r) => r.product },
+      { key: 'identifier', type: 'string', accessor: (r) => r.identifier },
+      { key: 'physical', type: 'number', accessor: (r) => r.physical },
+      { key: 'available', type: 'number', accessor: (r) => r.available },
+      { key: 'held', type: 'number', accessor: (r) => r.held },
+      { key: 'unavailable', type: 'number', accessor: (r) => r.unavailable },
+      { key: 'condition', type: 'string', accessor: (r) => r.condition },
+      {
+        key: 'status',
+        type: 'status',
+        statusOrder: ['Saleable', 'Hold'],
+        accessor: (r) => r.status,
+      },
+    ],
+    [],
+  );
+
+  const filterCategories = useMemo(() => deriveFilterCategories(rows, filterDefs), [rows, filterDefs]);
+
+  const visible = useMemo(() => {
+    const searched = rows.filter((item) => {
+      if (!search.trim()) return true;
+      const q = search.toLowerCase();
+      return (
+        item.product.toLowerCase().includes(q) ||
+        item.variant.toLowerCase().includes(q) ||
+        item.identifier.toLowerCase().includes(q)
+      );
+    });
+    return applyFiltersAndSort(searched, filters, filterDefs, sort, sortDefs);
+  }, [rows, search, filters, filterDefs, sort, sortDefs]);
+
+  const hasActiveFilters = Object.values(filters).some((vals) => vals && vals.length > 0);
 
   const totals = rows.reduce(
     (acc, r) => ({
@@ -299,11 +350,10 @@ export function StockWorkspace({ mode }: { mode: 'inventory' | 'stocktakes' }) {
             aria-label="Search product, variant or identifier"
           />
         </label>
-        <StaffFilterDropdown
-          label="Stock pool"
-          value={availabilityFilter}
-          options={['All', 'Has held', 'All available']}
-          onChange={setAvailabilityFilter}
+        <HierarchicalFilterDropdown
+          categories={filterCategories}
+          selected={filters}
+          onChange={setFilters}
         />
         <button
           type="button"
@@ -333,16 +383,22 @@ export function StockWorkspace({ mode }: { mode: 'inventory' | 'stocktakes' }) {
         </button>
       </div>
 
+      <ActiveFilterChips
+        categories={filterCategories}
+        selected={filters}
+        onChange={setFilters}
+      />
+
       <section className="acct-panel" style={{ padding: 0 }}>
         <div className="staff-table-head staff-inv-cols">
-          <span>PRODUCT</span>
-          <span>IDENTIFIER / LOT</span>
-          <span>PHYSICAL</span>
-          <span>AVAILABLE</span>
-          <span>HELD</span>
-          <span>UNAVAILABLE</span>
-          <span>CONDITION</span>
-          <span>STATUS</span>
+          <SortableHeader label="PRODUCT" sortKey="product" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="IDENTIFIER / LOT" sortKey="identifier" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="PHYSICAL" sortKey="physical" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="AVAILABLE" sortKey="available" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="HELD" sortKey="held" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="UNAVAILABLE" sortKey="unavailable" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="CONDITION" sortKey="condition" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="STATUS" sortKey="status" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
         </div>
 
         {loading ? (
@@ -354,15 +410,15 @@ export function StockWorkspace({ mode }: { mode: 'inventory' | 'stocktakes' }) {
         ) : visible.length === 0 ? (
           <EmptyState
             title="No inventory items found"
-            description="No product variants match your current search or filter."
+            description="No product variants match your current search or filters."
             action={
-              search || availabilityFilter !== 'All' ? (
+              search || hasActiveFilters ? (
                 <button
                   type="button"
                   className="button"
                   onClick={() => {
                     setSearch('');
-                    setAvailabilityFilter('All');
+                    setFilters({});
                   }}
                 >
                   Clear filters

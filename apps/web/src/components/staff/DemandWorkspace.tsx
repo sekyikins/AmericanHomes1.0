@@ -11,7 +11,10 @@ import {
 } from '@/components/staff/demand/demandConfig';
 import { DemandCreateModal } from '@/components/staff/demand/DemandCreateModal';
 import { DemandDetailDrawer } from '@/components/staff/demand/DemandDetailDrawer';
-import { StaffFilterDropdown } from '@/components/staff/StaffFilterDropdown';
+import {
+  ActiveFilterChips,
+  HierarchicalFilterDropdown,
+} from '@/components/staff/TableControls';
 import { ConfirmDialog, EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
 import {
   allocationsApi,
@@ -21,6 +24,12 @@ import {
   sourcingApi,
 } from '@/lib/api';
 import { downloadCsv } from '@/lib/staffUtils';
+import {
+  applyFiltersAndSort,
+  deriveFilterCategories,
+  type FilterCategoryDef,
+  type FilterValueMap,
+} from '@/lib/tableUtils';
 import { useToast } from '@/providers/toast.provider';
 import {
   ChevronRight,
@@ -30,7 +39,7 @@ import {
   Search,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 
 export function DemandWorkspace({
   mode,
@@ -47,7 +56,7 @@ export function DemandWorkspace({
   const [selectedId, setSelectedId] = useState<string>('');
   const [detailOpen, setDetailOpen] = useState(false);
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'All' | DemandStatus>('All');
+  const [filters, setFilters] = useState<FilterValueMap>({});
   const [managementNote, setManagementNote] = useState('');
 
   const [modalOpen, setModalOpen] = useState(false);
@@ -209,16 +218,30 @@ export function DemandWorkspace({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [detailOpen]);
 
-  const visible = items.filter((item) => {
-    if (statusFilter !== 'All' && item.status !== statusFilter) return false;
-    if (!search.trim()) return true;
-    const q = search.toLowerCase();
-    return (
-      item.title.toLowerCase().includes(q) ||
-      item.reference.toLowerCase().includes(q) ||
-      item.customerName.toLowerCase().includes(q)
-    );
-  });
+  const filterDefs: FilterCategoryDef<DemandItem>[] = useMemo(
+    () => [
+      { key: 'status', label: 'Status', accessor: (i) => i.status },
+      { key: 'customer', label: 'Customer', accessor: (i) => i.customerName },
+    ],
+    [],
+  );
+
+  const filterCategories = useMemo(() => deriveFilterCategories(items, filterDefs), [items, filterDefs]);
+
+  const visible = useMemo(() => {
+    const searched = items.filter((item) => {
+      if (!search.trim()) return true;
+      const q = search.toLowerCase();
+      return (
+        item.title.toLowerCase().includes(q) ||
+        item.reference.toLowerCase().includes(q) ||
+        item.customerName.toLowerCase().includes(q)
+      );
+    });
+    return applyFiltersAndSort(searched, filters, filterDefs, null, []);
+  }, [items, search, filters, filterDefs]);
+
+  const hasActiveFilters = Object.values(filters).some((vals) => vals && vals.length > 0);
 
   const selected = items.find((i) => i.id === selectedId) ?? visible[0] ?? items[0];
 
@@ -343,17 +366,10 @@ export function DemandWorkspace({
                 aria-label={cfg.searchPlaceholder}
               />
             </label>
-            <StaffFilterDropdown
-              label="Status"
-              value={statusFilter}
-              options={[
-                'All',
-                'Under review',
-                'Provider confirmed',
-                'Added to sourcing',
-                'Deferred',
-              ]}
-              onChange={setStatusFilter}
+            <HierarchicalFilterDropdown
+              categories={filterCategories}
+              selected={filters}
+              onChange={setFilters}
             />
             <button
               type="button"
@@ -379,6 +395,12 @@ export function DemandWorkspace({
             </button>
           </div>
 
+          <ActiveFilterChips
+            categories={filterCategories}
+            selected={filters}
+            onChange={setFilters}
+          />
+
           <section className="acct-panel" style={{ padding: 0 }}>
             {loading ? (
               <div style={{ padding: 16 }}>
@@ -390,18 +412,18 @@ export function DemandWorkspace({
               <EmptyState
                 title={`No ${cfg.title.toLowerCase()} found`}
                 description={
-                  search || statusFilter !== 'All'
+                  search || hasActiveFilters
                     ? 'No records match your current search or filter.'
                     : `No ${cfg.title.toLowerCase()} have been recorded yet.`
                 }
                 action={
-                  search || statusFilter !== 'All' ? (
+                  search || hasActiveFilters ? (
                     <button
                       type="button"
                       className="button"
                       onClick={() => {
                         setSearch('');
-                        setStatusFilter('All');
+                        setFilters({});
                       }}
                     >
                       Clear filters

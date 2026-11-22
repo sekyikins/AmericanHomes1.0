@@ -1,5 +1,6 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Res, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth } from '@nestjs/swagger';
+import { Response } from 'express';
 import {
   AuthenticatedUser,
   CurrentUser,
@@ -7,8 +8,25 @@ import {
 import { AuthGuard } from '../../common/guards/auth.guard';
 import { AuthenticationService } from './authentication.service';
 import { RequestOtpDto } from './dto/request-otp.dto';
+import {
+  ChangePasswordDto,
+  ConfirmPasswordResetDto,
+  EnableMfaDto,
+  RequestPasswordResetDto,
+} from './dto/security-auth.dto';
 import { StaffLoginDto } from './dto/staff-login.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
+
+function setSessionCookie(res: Response, token: string): void {
+  const isProduction = process.env.NODE_ENV === 'production';
+  res.cookie('ah_session', token, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: isProduction,
+    maxAge: 12 * 60 * 60 * 1000,
+    path: '/',
+  });
+}
 
 @Controller('auth')
 export class AuthenticationController {
@@ -20,13 +38,37 @@ export class AuthenticationController {
   }
 
   @Post('verify-otp')
-  verifyOtp(@Body() dto: VerifyOtpDto) {
-    return this.auth.verifyOtp(dto);
+  async verifyOtp(@Body() dto: VerifyOtpDto, @Res({ passthrough: true }) res: Response) {
+    const result = await this.auth.verifyOtp(dto);
+    if (result.verified && result.token) {
+      setSessionCookie(res, result.token);
+    }
+    return result;
   }
 
   @Post('staff-login')
-  staffLogin(@Body() dto: StaffLoginDto) {
-    return this.auth.staffLogin(dto);
+  async staffLogin(@Body() dto: StaffLoginDto, @Res({ passthrough: true }) res: Response) {
+    const result = await this.auth.staffLogin(dto);
+    if (result.token) {
+      setSessionCookie(res, result.token);
+    }
+    return result;
+  }
+
+  @Post('logout')
+  logout(@Res({ passthrough: true }) res: Response) {
+    res.clearCookie('ah_session', { path: '/' });
+    return { loggedOut: true };
+  }
+
+  @Post('staff-reset-password/request')
+  requestStaffPasswordReset(@Body() dto: RequestPasswordResetDto) {
+    return this.auth.requestStaffPasswordReset(dto.email);
+  }
+
+  @Post('staff-reset-password/confirm')
+  confirmStaffPasswordReset(@Body() dto: ConfirmPasswordResetDto) {
+    return this.auth.confirmStaffPasswordReset(dto.token, dto.newPassword);
   }
 
   @Post('staff-mfa/setup')
@@ -39,8 +81,8 @@ export class AuthenticationController {
   @Post('staff-mfa/enable')
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
-  enableMfa(@CurrentUser() user: AuthenticatedUser, @Body('code') code: string) {
-    return this.auth.enableMfa(user.id, code);
+  enableMfa(@CurrentUser() user: AuthenticatedUser, @Body() dto: EnableMfaDto) {
+    return this.auth.enableMfa(user.id, dto.code);
   }
 
   @Post('staff-change-password')
@@ -48,10 +90,9 @@ export class AuthenticationController {
   @UseGuards(AuthGuard)
   changePassword(
     @CurrentUser() user: AuthenticatedUser,
-    @Body('currentPassword') currentPassword: string,
-    @Body('newPassword') newPassword: string,
+    @Body() dto: ChangePasswordDto,
   ) {
-    return this.auth.changeStaffPassword(user.id, currentPassword, newPassword);
+    return this.auth.changeStaffPassword(user.id, dto.currentPassword, dto.newPassword);
   }
 
   @Post('revoke-other-sessions')

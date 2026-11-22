@@ -17,8 +17,10 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   const token = getToken();
   const res = await fetch(`${API_BASE}${path}`, {
     method,
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
+      'X-Requested-With': 'XMLHttpRequest',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),

@@ -1,7 +1,7 @@
-import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { invalidateAuthCache } from '../../common/guards/auth.guard';
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import { generateTotpCode, hashPassword, verifyPassword, verifyTotpCode } from '../../common/utils/password';
 import { signSessionToken } from '../../common/utils/token';
 import { PrismaService } from '../../database/prisma.service';
@@ -22,8 +22,18 @@ const MANAGER_PERMISSION_MARKERS = [
   'orders.approve',
 ];
 
+const RESET_TOKEN_TTL_MS = 15 * 60 * 1000;
+
+type PasswordResetEntry = {
+  userId: string;
+  expiresAt: number;
+};
+
 @Injectable()
 export class AuthenticationService {
+  private readonly logger = new Logger(AuthenticationService.name);
+  private readonly resetTokens = new Map<string, PasswordResetEntry>();
+
   constructor(
     private readonly otpService: OtpService,
     private readonly prisma: PrismaService,
@@ -168,9 +178,11 @@ export class AuthenticationService {
       },
     });
     if (!user?.staff || !user.staff.isActive) {
+      this.logger.warn(`[SECURITY] Failed staff login: inactive or unknown email=${dto.email}`);
       throw new UnauthorizedException('Invalid or inactive staff account');
     }
     if (!user.passwordHash || !verifyPassword(dto.password, user.passwordHash)) {
+      this.logger.warn(`[SECURITY] Failed staff login: wrong password userId=${user.id}`);
       throw new UnauthorizedException('Invalid email or password');
     }
 
@@ -185,10 +197,12 @@ export class AuthenticationService {
         throw new UnauthorizedException('MFA verification code required');
       }
       if (!verifyTotpCode(user.mfaSecret, dto.mfaCode)) {
+        this.logger.warn(`[SECURITY] Invalid MFA code on staff login userId=${user.id}`);
         throw new UnauthorizedException('Invalid MFA verification code');
       }
     } else if (isPrivileged && dto.mfaCode && user.mfaSecret) {
       if (!verifyTotpCode(user.mfaSecret, dto.mfaCode)) {
+        this.logger.warn(`[SECURITY] Invalid MFA code on privileged login userId=${user.id}`);
         throw new UnauthorizedException('Invalid MFA verification code');
       }
     }
@@ -304,5 +318,69 @@ export class AuthenticationService {
       secret,
     );
     return { revoked: true, token };
+  }
+
+  async requestStaffPasswordReset(email: string): Promise<{ requested: boolean; expiresInMinutes: number }> {
+    const cleanEmail = email.trim().toLowerCase();
+    const user = await this.prisma.user.findUnique({
+      where: { email: cleanEmail },
+      include: { staff: true },
+    });
+    if (user?.staff && user.staff.isActive) {
+      const rawToken = randomBytes(32).toString('hex');
+      const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+      // Prune expired entries before adding
+      const now = Date.now();
+      for (const [k, entry] of this.resetTokens.entries()) {
+        if (now > entry.expiresAt) this.resetTokens.delete(k);
+      }
+      this.resetTokens.set(tokenHash, {
+        userId: user.id,
+        expiresAt: now + RESET_TOKEN_TTL_MS,
+      });
+      await this.prisma.auditEvent.create({
+        data: {
+          actorId: user.id,
+          action: 'STAFF_PASSWORD_RESET_REQUESTED',
+          entityType: 'User',
+          entityId: user.id,
+        },
+      });
+      if (process.env.NODE_ENV !== 'production') {
+        this.logger.log(`[DEV] Staff password reset token generated for ${cleanEmail} (expires 15m)`);
+      }
+    }
+    return { requested: true, expiresInMinutes: 15 };
+  }
+
+  async confirmStaffPasswordReset(rawToken: string, newPassword: string): Promise<{ reset: boolean }> {
+    if (!newPassword || newPassword.length < 8) {
+      throw new BadRequestException('New password must be at least 8 characters');
+    }
+    const tokenHash = createHash('sha256').update(rawToken.trim()).digest('hex');
+    const entry = this.resetTokens.get(tokenHash);
+    if (!entry || Date.now() > entry.expiresAt) {
+      this.resetTokens.delete(tokenHash);
+      this.logger.warn('[SECURITY] Invalid or expired staff password reset token');
+      throw new UnauthorizedException('Invalid or expired password reset link');
+    }
+    this.resetTokens.delete(tokenHash);
+    await this.prisma.user.update({
+      where: { id: entry.userId },
+      data: {
+        passwordHash: hashPassword(newPassword),
+        sessionVersion: { increment: 1 },
+      },
+    });
+    invalidateAuthCache(entry.userId);
+    await this.prisma.auditEvent.create({
+      data: {
+        actorId: entry.userId,
+        action: 'STAFF_PASSWORD_RESET_COMPLETED',
+        entityType: 'User',
+        entityId: entry.userId,
+      },
+    });
+    return { reset: true };
   }
 }

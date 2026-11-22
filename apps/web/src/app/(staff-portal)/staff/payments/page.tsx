@@ -5,10 +5,23 @@ import {
   ReviewPaymentModal,
   type PaymentAccountsInfo,
 } from '@/components/staff/payments/PaymentModals';
-import { StaffFilterDropdown } from '@/components/staff/StaffFilterDropdown';
+import {
+  ActiveFilterChips,
+  HierarchicalFilterDropdown,
+  SortableHeader,
+} from '@/components/staff/TableControls';
 import { ConfirmDialog, EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
 import { governanceApi, ordersApi, paymentsApi } from '@/lib/api';
 import { downloadCsv, formatStatusLabel, shortRef } from '@/lib/staffUtils';
+import {
+  applyFiltersAndSort,
+  cycleSort,
+  deriveFilterCategories,
+  type FilterCategoryDef,
+  type FilterValueMap,
+  type SortColumnDef,
+  type SortState,
+} from '@/lib/tableUtils';
 import { useToast } from '@/providers/toast.provider';
 import {
   ChevronRight,
@@ -17,7 +30,7 @@ import {
   Search,
 } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
-import { Suspense, useCallback, useEffect, useState, type FormEvent } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 
 type PaymentRow = {
   id: string;
@@ -53,7 +66,8 @@ function StaffPaymentsContent() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('All');
+  const [filters, setFilters] = useState<FilterValueMap>({});
+  const [sort, setSort] = useState<SortState>(null);
   const [sourceFilter, setSourceFilter] = useState<'All' | 'Online' | 'Walk-in'>('All');
   const [modalMode, setModalMode] = useState<'create' | 'review' | null>(null);
   const [selected, setSelected] = useState<PaymentRow | null>(null);
@@ -160,17 +174,49 @@ function StaffPaymentsContent() {
     }
   }, [searchParams, loadOrders]);
 
-  const visible = rows.filter((r) => {
-    if (statusFilter !== 'All' && r.status !== statusFilter) return false;
-    if (sourceFilter !== 'All' && r.source !== sourceFilter) return false;
-    if (!search.trim()) return true;
-    const q = search.toLowerCase();
-    return (
-      r.reference.toLowerCase().includes(q) ||
-      r.orderReference.toLowerCase().includes(q) ||
-      r.customer.toLowerCase().includes(q)
-    );
-  });
+  const filterDefs: FilterCategoryDef<PaymentRow>[] = useMemo(
+    () => [
+      { key: 'status', label: 'Status', accessor: (r) => r.status },
+      { key: 'method', label: 'Payment method', accessor: (r) => r.method },
+      { key: 'source', label: 'Channel', accessor: (r) => r.source },
+    ],
+    [],
+  );
+
+  const sortDefs: SortColumnDef<PaymentRow>[] = useMemo(
+    () => [
+      { key: 'reference', type: 'string', accessor: (r) => r.reference },
+      { key: 'customer', type: 'string', accessor: (r) => r.customer },
+      { key: 'amount', type: 'currency', accessor: (r) => r.amount },
+      {
+        key: 'status',
+        type: 'status',
+        statusOrder: ['PENDING', 'PARTIAL', 'VERIFIED', 'FAILED', 'REFUNDED', 'EXCEPTION'],
+        accessor: (r) => r.status,
+      },
+      { key: 'method', type: 'string', accessor: (r) => r.method },
+      { key: 'date', type: 'date', accessor: (r) => r.date },
+    ],
+    [],
+  );
+
+  const filterCategories = useMemo(() => deriveFilterCategories(rows, filterDefs), [rows, filterDefs]);
+
+  const visible = useMemo(() => {
+    const searched = rows.filter((r) => {
+      if (sourceFilter !== 'All' && r.source !== sourceFilter) return false;
+      if (!search.trim()) return true;
+      const q = search.toLowerCase();
+      return (
+        r.reference.toLowerCase().includes(q) ||
+        r.orderReference.toLowerCase().includes(q) ||
+        r.customer.toLowerCase().includes(q)
+      );
+    });
+    return applyFiltersAndSort(searched, filters, filterDefs, sort, sortDefs);
+  }, [rows, sourceFilter, search, filters, filterDefs, sort, sortDefs]);
+
+  const hasActiveFilters = Object.values(filters).some((vals) => vals && vals.length > 0);
 
   const selectedOrderOption = orders.find((o) => o.id === orderId);
 
@@ -281,11 +327,10 @@ function StaffPaymentsContent() {
           />
         </label>
 
-        <StaffFilterDropdown
-          label="Status"
-          value={statusFilter}
-          options={['All', 'PENDING', 'PARTIAL', 'VERIFIED', 'FAILED', 'REFUNDED', 'EXCEPTION']}
-          onChange={setStatusFilter}
+        <HierarchicalFilterDropdown
+          categories={filterCategories}
+          selected={filters}
+          onChange={setFilters}
         />
 
         <button
@@ -313,14 +358,20 @@ function StaffPaymentsContent() {
         </button>
       </div>
 
+      <ActiveFilterChips
+        categories={filterCategories}
+        selected={filters}
+        onChange={setFilters}
+      />
+
       <section className="acct-panel" style={{ padding: 0 }}>
         <div className="staff-table-head staff-sales-cols">
-          <span>REFERENCE</span>
-          <span>CUSTOMER</span>
-          <span>AMOUNT</span>
-          <span>STATUS</span>
-          <span>METHOD</span>
-          <span>DATE</span>
+          <SortableHeader label="REFERENCE" sortKey="reference" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="CUSTOMER" sortKey="customer" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="AMOUNT" sortKey="amount" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="STATUS" sortKey="status" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="METHOD" sortKey="method" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="DATE" sortKey="date" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
           <span />
         </div>
 
@@ -334,6 +385,20 @@ function StaffPaymentsContent() {
           <EmptyState
             title="No payments found"
             description="No payment records match your current search or filter."
+            action={
+              search || hasActiveFilters ? (
+                <button
+                  type="button"
+                  className="button"
+                  onClick={() => {
+                    setSearch('');
+                    setFilters({});
+                  }}
+                >
+                  Clear filters
+                </button>
+              ) : undefined
+            }
           />
         ) : (
           visible.map((r) => (

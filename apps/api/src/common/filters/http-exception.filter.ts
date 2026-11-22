@@ -1,5 +1,5 @@
 import { ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus, Logger } from '@nestjs/common';
-import { Response } from 'express';
+import { Request, Response } from 'express';
 
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
@@ -7,6 +7,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
+    const request = ctx.getRequest<Request>();
     const response = ctx.getResponse<Response>();
     const status =
       exception instanceof HttpException ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
@@ -14,6 +15,14 @@ export class HttpExceptionFilter implements ExceptionFilter {
       this.logger.error(
         exception instanceof Error ? exception.message : String(exception),
         exception instanceof Error ? exception.stack : undefined,
+      );
+    } else if (
+      status === HttpStatus.UNAUTHORIZED ||
+      status === HttpStatus.FORBIDDEN ||
+      status === HttpStatus.TOO_MANY_REQUESTS
+    ) {
+      this.logger.warn(
+        `[SECURITY] status=${status} method=${request?.method ?? ''} path=${request?.originalUrl ?? ''} ip=${request?.ip ?? 'unknown'}`,
       );
     }
     const exceptionResponse =

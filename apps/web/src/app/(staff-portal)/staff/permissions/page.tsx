@@ -1,11 +1,24 @@
 'use client';
 
 import { PermissionGroupModal } from '@/components/staff/permissions/PermissionGroupModal';
-import { StaffFilterDropdown } from '@/components/staff/StaffFilterDropdown';
+import {
+  ActiveFilterChips,
+  HierarchicalFilterDropdown,
+  SortableHeader,
+} from '@/components/staff/TableControls';
 import { EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
 import { permissionsApi } from '@/lib/api';
 import { useToast } from '@/providers/toast.provider';
 import { downloadCsv } from '@/lib/staffUtils';
+import {
+  applyFiltersAndSort,
+  cycleSort,
+  deriveFilterCategories,
+  type FilterCategoryDef,
+  type FilterValueMap,
+  type SortColumnDef,
+  type SortState,
+} from '@/lib/tableUtils';
 import {
   ChevronRight,
   Download,
@@ -13,7 +26,7 @@ import {
   Search,
   ShieldCheck,
 } from 'lucide-react';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 
 type PermissionGroupRow = {
   id: string;
@@ -32,9 +45,8 @@ export default function StaffPermissionsPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
-  const [sortOrder, setSortOrder] = useState<
-    'Name (A–Z)' | 'Name (Z–A)' | 'Permissions (High–Low)' | 'Permissions (Low–High)'
-  >('Name (A–Z)');
+  const [filters, setFilters] = useState<FilterValueMap>({});
+  const [sort, setSort] = useState<SortState>(null);
   const [modalMode, setModalMode] = useState<'create' | 'edit' | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -100,8 +112,27 @@ export default function StaffPermissionsPage() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [modalMode]);
 
-  const visible = groups
-    .filter((g) => {
+  const filterDefs: FilterCategoryDef<PermissionGroupRow>[] = useMemo(
+    () => [
+      { key: 'roleType', label: 'Role type', accessor: (g) => g.roleType },
+      { key: 'scope', label: 'Scope', accessor: (g) => g.membersLabel },
+    ],
+    [],
+  );
+
+  const sortDefs: SortColumnDef<PermissionGroupRow>[] = useMemo(
+    () => [
+      { key: 'name', type: 'string', accessor: (g) => g.name },
+      { key: 'permissionCount', type: 'number', accessor: (g) => g.permissionCount },
+      { key: 'membersLabel', type: 'string', accessor: (g) => g.membersLabel },
+    ],
+    [],
+  );
+
+  const filterCategories = useMemo(() => deriveFilterCategories(groups, filterDefs), [groups, filterDefs]);
+
+  const visible = useMemo(() => {
+    const searched = groups.filter((g) => {
       if (!search.trim()) return true;
       const q = search.toLowerCase();
       return (
@@ -109,13 +140,11 @@ export default function StaffPermissionsPage() {
         g.membersLabel.toLowerCase().includes(q) ||
         g.refCode.toLowerCase().includes(q)
       );
-    })
-    .sort((a, b) => {
-      if (sortOrder === 'Name (Z–A)') return b.name.localeCompare(a.name);
-      if (sortOrder === 'Permissions (High–Low)') return b.permissionCount - a.permissionCount;
-      if (sortOrder === 'Permissions (Low–High)') return a.permissionCount - b.permissionCount;
-      return a.name.localeCompare(b.name);
     });
+    return applyFiltersAndSort(searched, filters, filterDefs, sort, sortDefs);
+  }, [groups, search, filters, filterDefs, sort, sortDefs]);
+
+  const hasActiveFilters = Object.values(filters).some((vals) => vals && vals.length > 0);
 
   const openCreate = () => {
     setModalMode('create');
@@ -248,16 +277,10 @@ export default function StaffPermissionsPage() {
             aria-label="Search permission groups"
           />
         </label>
-        <StaffFilterDropdown
-          label="Order"
-          value={sortOrder}
-          options={[
-            'Name (A–Z)',
-            'Name (Z–A)',
-            'Permissions (High–Low)',
-            'Permissions (Low–High)',
-          ]}
-          onChange={setSortOrder}
+        <HierarchicalFilterDropdown
+          categories={filterCategories}
+          selected={filters}
+          onChange={setFilters}
         />
         <button
           type="button"
@@ -282,14 +305,20 @@ export default function StaffPermissionsPage() {
         </button>
       </div>
 
+      <ActiveFilterChips
+        categories={filterCategories}
+        selected={filters}
+        onChange={setFilters}
+      />
+
       <section className="acct-panel" style={{ padding: 0 }}>
         <div
           className="staff-table-head"
           style={{ gridTemplateColumns: '1.3fr 0.9fr 1.6fr 28px' }}
         >
-          <span>GROUP</span>
-          <span>PERMISSIONS</span>
-          <span>DESCRIPTION</span>
+          <SortableHeader label="GROUP" sortKey="name" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="PERMISSIONS" sortKey="permissionCount" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+          <SortableHeader label="DESCRIPTION" sortKey="membersLabel" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
           <span />
         </div>
 
@@ -303,6 +332,20 @@ export default function StaffPermissionsPage() {
           <EmptyState
             title="No permission groups found"
             description="Create a permission group or clear your search filter."
+            action={
+              search.trim() || hasActiveFilters ? (
+                <button
+                  type="button"
+                  className="button"
+                  onClick={() => {
+                    setSearch('');
+                    setFilters({});
+                  }}
+                >
+                  Clear filters
+                </button>
+              ) : undefined
+            }
           />
         ) : (
           visible.map((group) => (
