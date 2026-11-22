@@ -1,7 +1,7 @@
 'use client';
 
 import { StaffModal } from '@/components/staff/StaffModal';
-import { Button } from '@/components/ui';
+import { Button, SearchableSelect } from '@/components/ui';
 import { formatStatusLabel } from '@/lib/staffUtils';
 
 export interface ReceivingShipmentOption {
@@ -35,27 +35,27 @@ export function StartReceivingSessionModal({
       <p className="login-sub">
         Open a receiving session to record received quantities and flag discrepancies.
       </p>
-      <label className="login-field">
+      <div className="login-field">
         <span>Shipment</span>
         {eligibleShipments.length === 0 ? (
           <p style={{ fontSize: 13, color: 'var(--muted)', margin: '8px 0 0' }}>
             All open shipments already have an active receiving session.
           </p>
         ) : (
-          <select
-            className="staff-field-select"
+          <SearchableSelect
+            ariaLabel="Select shipment"
+            options={eligibleShipments.map((s) => ({
+              value: s.id,
+              label: `${s.reference} — ${s.providerName ?? 'Provider'} (${formatStatusLabel(s.status)})`,
+              searchText: `${s.reference} ${s.providerName ?? ''} ${s.status}`,
+            }))}
             value={selectedShipmentId}
-            onChange={(e) => onSelectShipment(e.target.value)}
-            style={{ borderRadius: 0 }}
-          >
-            {eligibleShipments.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.reference} — {s.providerName} ({formatStatusLabel(s.status)})
-              </option>
-            ))}
-          </select>
+            onChange={onSelectShipment}
+            placeholder="Search shipment by reference or provider…"
+            searchPlaceholder="Type shipment reference or provider…"
+          />
         )}
-      </label>
+      </div>
       <div className="review-actions" style={{ borderTop: 0, paddingTop: 10 }}>
         <Button
           type="button"

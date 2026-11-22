@@ -5,7 +5,7 @@ import {
   StartReceivingSessionModal,
 } from '@/components/staff/receiving/ReceivingModals';
 import { StaffFilterDropdown } from '@/components/staff/StaffFilterDropdown';
-import { Button, ConfirmDialog, EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
+import { Button, ConfirmDialog, EmptyState, ErrorState, SearchableSelect, TableSkeleton } from '@/components/ui';
 import { receivingApi, shipmentsApi } from '@/lib/api';
 import { useToast } from '@/providers/toast.provider';
 import {
@@ -365,22 +365,24 @@ export default function StaffReceivingPage() {
             }}
           />
           {visibleSessions.length > 0 && (
-            <select
-              className="dash-select"
-              aria-label="Select receiving session"
-              value={selectedSessionId}
-              onChange={(e) => {
-                const next = sessions.find((s) => s.id === e.target.value);
-                setSelectedSessionId(e.target.value);
-                hydrateSessionItems(next);
-              }}
-            >
-              {visibleSessions.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.shipment?.reference ?? s.shipmentId} · #{s.id.slice(-4).toUpperCase()} ({s.status})
-                </option>
-              ))}
-            </select>
+            <div style={{ minWidth: 260, flex: '1 1 260px', maxWidth: 340 }}>
+              <SearchableSelect
+                ariaLabel="Select receiving session"
+                options={visibleSessions.map((s) => ({
+                  value: s.id,
+                  label: `${s.shipment?.reference ?? s.shipmentId} · #${s.id.slice(-4).toUpperCase()} (${s.status})`,
+                  searchText: `${s.shipment?.reference ?? ''} ${s.shipmentId} ${s.id} ${s.status}`,
+                }))}
+                value={selectedSessionId}
+                onChange={(nextId) => {
+                  const next = sessions.find((s) => s.id === nextId);
+                  setSelectedSessionId(nextId);
+                  hydrateSessionItems(next);
+                }}
+                placeholder="Select receiving session…"
+                searchPlaceholder="Type shipment ref or session ID…"
+              />
+            </div>
           )}
           <button type="button" className="button" onClick={() => setStartModalOpen(true)}>
             <Plus size={14} />
