@@ -1,6 +1,6 @@
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
@@ -20,16 +20,12 @@ async function bootstrap() {
     }
   }
 
-  const app = await NestFactory.create(AppModule);
-  const httpAdapter = app.getHttpAdapter().getInstance() as {
-    disable?: (setting: string) => void;
-    set?: (setting: string, val: unknown) => void;
-  };
-  httpAdapter.disable?.('x-powered-by');
-  httpAdapter.set?.('trust proxy', 1);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  app.disable('x-powered-by');
+  app.set('trust proxy', 1);
 
-  app.use(json({ limit: '8mb' }));
-  app.use(urlencoded({ extended: true, limit: '8mb' }));
+  app.useBodyParser('json', { limit: '8mb' });
+  app.useBodyParser('urlencoded', { extended: true, limit: '8mb' });
 
   const origins = (process.env.CORS_ORIGINS ?? 'http://localhost:3000')
     .split(',')
