@@ -1,0 +1,78 @@
+name: CD
+
+on:
+  workflow_run:
+    workflows: ['CI']
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: cd-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy Production
+    runs-on: ubuntu-latest
+    environment: production
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Run Prisma database migrations
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "DATABASE_URL secret not configured; skipping migrations."
+            exit 0
+          fi
+          pnpm install --frozen-lockfile
+          pnpm exec prisma migrate deploy --schema=prisma/schema.prisma
+
+      - name: Trigger API deployment hook
+        env:
+          API_DEPLOY_HOOK_URL: ${{ secrets.API_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$API_DEPLOY_HOOK_URL" ]; then
+            echo "API_DEPLOY_HOOK_URL secret not configured; skipping API deploy."
+            exit 0
+          fi
+          curl -fsSL -X POST "$API_DEPLOY_HOOK_URL"
+
+      - name: Trigger Web deployment hook
+        env:
+          WEB_DEPLOY_HOOK_URL: ${{ secrets.WEB_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$WEB_DEPLOY_HOOK_URL" ]; then
+            echo "WEB_DEPLOY_HOOK_URL secret not configured; skipping Web deploy."
+            exit 0
+          fi
+          curl -fsSL -X POST "$WEB_DEPLOY_HOOK_URL"
+
+      - name: Verify API health endpoint
+        env:
+          API_HEALTH_URL: ${{ vars.API_HEALTH_URL }}
+        run: |
+          if [ -z "$API_HEALTH_URL" ]; then
+            echo "API_HEALTH_URL variable not configured; skipping health check."
+            exit 0
+          fi
+          curl -fsSL "$API_HEALTH_URL"

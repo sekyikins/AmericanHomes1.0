@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality-and-build:
+    name: Typecheck & Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm db:generate
+
+      - name: Run monorepo typecheck
+        run: pnpm typecheck
+
+      - name: Build API
+        run: pnpm --filter @americanhomes/api build
+
+      - name: Build Web
+        env:
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api' }}
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: pnpm --filter @americanhomes/web build
+
+  security-checks:
+    name: Security & Secret Hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Ensure no .env or private key files are tracked
+        run: |
+          if git ls-files | grep -E '(^\.env$|\.env\.local$|\.pem$|\.key$|\.p12$)' ; then
+            echo "ERROR: Sensitive environment or key file is tracked in git!"
+            exit 1
+          fi
+          echo "No sensitive env or key files tracked."
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Dependency vulnerability audit
+        continue-on-error: true
+        run: pnpm audit --audit-level=high
