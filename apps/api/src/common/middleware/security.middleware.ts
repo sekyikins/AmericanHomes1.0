@@ -14,7 +14,7 @@ export class SecurityHeadersMiddleware implements NestMiddleware {
     res.setHeader('X-XSS-Protection', '0');
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
     res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-    res.setHeader('Cross-Origin-Resource-Policy', 'same-site');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     if (process.env.NODE_ENV === 'production') {
       res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     }
@@ -31,10 +31,14 @@ export class AuthRateLimitMiddleware implements NestMiddleware {
   private readonly maxRequests = Number(process.env.AUTH_RATE_LIMIT_MAX ?? 20);
 
   use(
-    req: { ip?: string; headers: Record<string, string | string[] | undefined>; originalUrl?: string },
+    req: { method?: string; ip?: string; headers: Record<string, string | string[] | undefined>; originalUrl?: string },
     res: { setHeader: (name: string, value: string) => void },
     next: () => void,
   ): void {
+    if (req.method === 'OPTIONS') {
+      next();
+      return;
+    }
     const forwarded = req.headers['x-forwarded-for'];
     const ip =
       (Array.isArray(forwarded) ? forwarded[0] : forwarded?.split(',')[0])?.trim() ||
