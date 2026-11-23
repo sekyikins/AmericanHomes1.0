@@ -160,8 +160,12 @@ export function LoginCard({
 
       <div className="login-inner">
         <Link className="brand" href="/" onClick={onClose} style={{ marginBottom: 44 }}>
-          <span className="brand-mark" aria-hidden="true">
-            <Home size={18} strokeWidth={2.2} />
+          <span className="brand-mark" aria-hidden="true" style={{ overflow: 'hidden', padding: 0 }}>
+            <img
+              src="/images/americanhomes-emblem.png"
+              alt=""
+              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+            />
           </span>
           <span>
             American<span style={{ color: 'var(--green)' }}>Homes</span>

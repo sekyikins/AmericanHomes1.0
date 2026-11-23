@@ -30,14 +30,18 @@ export class ShipmentsController {
 
   @Post()
   @RequirePermission(PERMISSIONS.SHIPMENTS.CREATE)
-  create(@Body() dto: CreateShipmentDto) {
-    return this.shipments.create(dto);
+  create(@Body() dto: CreateShipmentDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.shipments.create(dto, user.id);
   }
 
   @Post(':id/manifest')
   @RequirePermission(PERMISSIONS.SHIPMENTS.UPDATE)
-  addManifest(@Param('id') id: string, @Body() dto: ManifestRevisionDto) {
-    return this.shipments.addManifestRevision(id, dto);
+  addManifest(
+    @Param('id') id: string,
+    @Body() dto: ManifestRevisionDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.shipments.addManifestRevision(id, dto, user.id);
   }
 
   @Post(':id/tracking')
@@ -45,8 +49,9 @@ export class ShipmentsController {
   addTracking(
     @Param('id') id: string,
     @Body() dto: { event: string; location?: string; occurredAt?: string; notes?: string },
+    @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.shipments.addTrackingEvent(id, dto);
+    return this.shipments.addTrackingEvent(id, dto, user.id);
   }
 
   @Post(':id/expenses')

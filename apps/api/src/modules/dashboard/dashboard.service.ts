@@ -26,61 +26,55 @@ export class DashboardService {
     const endOfToday = new Date(now);
     endOfToday.setHours(23, 59, 59, 999);
 
-    const [
-      inventoryLots,
-      activeOrders,
-      awaitingCollectionOrders,
-      pendingAdjustments,
-      pendingPriceApprovals,
-      pendingManualPayments,
-      salesTotalAgg,
-      verifiedPaymentsAgg,
-      paidPayments30d,
-      latestShipment,
-      unexpectedDiscrepancies,
-      expiringReservations,
-      failedLotsCount,
-    ] = await Promise.all([
-      this.prisma.stockLot.aggregate({ _sum: { available: true, held: true, unavailable: true } }),
-      this.prisma.salesOrder.count({
-        where: { orderStatus: { in: ['PLACED', 'CONFIRMED'] } },
-      }),
-      this.prisma.salesOrder.count({
-        where: {
-          orderStatus: 'CONFIRMED',
-          fulfilmentStatus: { in: ['READY_FOR_COLLECTION', 'PARTIALLY_COLLECTED'] },
-        },
-      }),
-      this.prisma.adjustmentProposal.findMany({
-        where: { status: 'PENDING' },
-        orderBy: { createdAt: 'desc' },
-        take: 10,
-      }),
-      this.prisma.pricingApproval.findMany({
-        where: { status: 'PENDING' },
-        orderBy: { createdAt: 'desc' },
-        take: 10,
-      }),
-      restrictFinancials
-        ? Promise.resolve([])
-        : this.prisma.payment.findMany({
-            where: { status: 'PENDING', method: { in: ['MANUAL', 'CASH', 'BANK_TRANSFER'] } },
-            orderBy: { createdAt: 'desc' },
-            take: 10,
-            include: { order: true },
-          }),
-      restrictFinancials
-        ? Promise.resolve(null)
-        : this.prisma.salesOrder.aggregate({
-            where: { orderStatus: { not: 'CANCELLED' } },
-            _sum: { totalCents: true },
-          }),
-      restrictFinancials
-        ? Promise.resolve(null)
-        : this.prisma.payment.aggregate({
-            where: { status: 'VERIFIED' },
-            _sum: { amountCents: true },
-          }),
+    const [inventoryLots, activeOrders, awaitingCollectionOrders, pendingAdjustments] =
+      await Promise.all([
+        this.prisma.stockLot.aggregate({ _sum: { available: true, held: true, unavailable: true } }),
+        this.prisma.salesOrder.count({
+          where: { orderStatus: { in: ['PLACED', 'CONFIRMED'] } },
+        }),
+        this.prisma.salesOrder.count({
+          where: {
+            orderStatus: 'CONFIRMED',
+            fulfilmentStatus: { in: ['READY_FOR_COLLECTION', 'PARTIALLY_COLLECTED'] },
+          },
+        }),
+        this.prisma.adjustmentProposal.findMany({
+          where: { status: 'PENDING' },
+          orderBy: { createdAt: 'desc' },
+          take: 10,
+        }),
+      ]);
+
+    const [pendingPriceApprovals, pendingManualPayments, salesTotalAgg, verifiedPaymentsAgg] =
+      await Promise.all([
+        this.prisma.pricingApproval.findMany({
+          where: { status: 'PENDING' },
+          orderBy: { createdAt: 'desc' },
+          take: 10,
+        }),
+        restrictFinancials
+          ? Promise.resolve([])
+          : this.prisma.payment.findMany({
+              where: { status: 'PENDING', method: { in: ['MANUAL', 'CASH', 'BANK_TRANSFER'] } },
+              orderBy: { createdAt: 'desc' },
+              take: 10,
+              include: { order: true },
+            }),
+        restrictFinancials
+          ? Promise.resolve(null)
+          : this.prisma.salesOrder.aggregate({
+              where: { orderStatus: { not: 'CANCELLED' } },
+              _sum: { totalCents: true },
+            }),
+        restrictFinancials
+          ? Promise.resolve(null)
+          : this.prisma.payment.aggregate({
+              where: { status: 'VERIFIED' },
+              _sum: { amountCents: true },
+            }),
+      ]);
+
+    const [paidPayments30d, latestShipment, unexpectedDiscrepancies] = await Promise.all([
       restrictFinancials
         ? Promise.resolve([])
         : this.prisma.payment.findMany({
@@ -102,6 +96,9 @@ export class DashboardService {
       this.prisma.discrepancy.count({
         where: { type: 'UNEXPECTED', resolution: null },
       }),
+    ]);
+
+    const [expiringReservations, failedLotsCount] = await Promise.all([
       this.prisma.reservation.findMany({
         where: {
           status: { in: ['PENDING', 'APPROVED', 'ACTIVE'] },

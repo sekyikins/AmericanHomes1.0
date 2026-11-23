@@ -74,7 +74,12 @@ export class CatalogueService {
     return product;
   }
 
-  createProduct(dto: CreateProductDto) {
+  async createProduct(dto: CreateProductDto) {
+    const skuBase = dto.name
+      .replace(/[^a-zA-Z0-9]/g, '')
+      .toUpperCase()
+      .slice(0, 6) || 'ITEM';
+    const sku = `AH-${skuBase}-${Date.now().toString().slice(-4)}`;
     return this.prisma.product.create({
       data: {
         name: dto.name,
@@ -88,6 +93,28 @@ export class CatalogueService {
         defectDisclosures: dto.defectDisclosures,
         shipmentId: dto.shipmentId,
         isPublished: false,
+        variants: {
+          create: {
+            sku,
+            name: 'Standard',
+            priceCents: 0,
+          },
+        },
+      },
+      include: { variants: true, media: true },
+    });
+  }
+
+  async addProductMedia(productId: string, url: string, type = 'IMAGE') {
+    const product = await this.prisma.product.findUnique({ where: { id: productId } });
+    if (!product) throw new NotFoundException(`Product ${productId} not found`);
+    const count = await this.prisma.productMedia.count({ where: { productId } });
+    return this.prisma.productMedia.create({
+      data: {
+        productId,
+        url,
+        type,
+        position: count,
       },
     });
   }

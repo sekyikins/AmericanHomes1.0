@@ -1,6 +1,6 @@
 'use client';
 
-import { EmptyState, ErrorState, PreparationSkeleton } from '@/components/ui';
+import { EmptyState, ErrorState, PreparationSkeleton, SearchableSelect } from '@/components/ui';
 import { catalogueApi, governanceApi } from '@/lib/api';
 import { useToast } from '@/providers/toast.provider';
 import {
@@ -37,6 +37,7 @@ type PrepProduct = {
   published?: boolean;
   isPublished?: boolean;
   images?: string[];
+  media?: Array<{ url?: string }>;
   defectDisclosure?: string;
   preparationSteps?: Array<{
     step: string;
@@ -221,24 +222,29 @@ export default function StaffPreparationPage() {
 
         <div className="dash-actions">
           {products.length > 0 && (
-            <select
-              className="dash-select"
-              aria-label="Select product"
-              value={selectedId}
-              onChange={(e) => {
-                const next = products.find((p) => p.id === e.target.value);
-                setSelectedId(e.target.value);
-                syncStageFromProduct(next);
-              }}
-            >
-              {products.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} ({p.published ? 'Published' : 'Draft'})
-                </option>
-              ))}
-            </select>
+            <div style={{ minWidth: 260, flex: '1 1 260px' }}>
+              <SearchableSelect
+                ariaLabel="Select product"
+                options={products.map((p) => {
+                  const isPub = Boolean(p.isPublished ?? p.published);
+                  return {
+                    value: p.id,
+                    label: `${p.name} (${isPub ? 'Published' : 'Draft'})`,
+                    searchText: `${p.name} ${p.category ?? ''} ${isPub ? 'Published' : 'Draft'}`,
+                  };
+                })}
+                value={selectedId}
+                onChange={(nextId) => {
+                  const next = products.find((p) => p.id === nextId);
+                  setSelectedId(nextId);
+                  syncStageFromProduct(next);
+                }}
+                placeholder="Select product…"
+                searchPlaceholder="Type product name or status…"
+              />
+            </div>
           )}
-          {product?.published ? (
+          {(product?.isPublished ?? product?.published) ? (
             <span className="acct-pill green">● Published</span>
           ) : (
             <span className="acct-pill amber">● {completedCount} of 6 complete</span>
@@ -510,7 +516,11 @@ export default function StaffPreparationPage() {
 
             <aside className="ship-card">
               <img
-                src={Array.isArray(product.images) && product.images[0] ? String(product.images[0]) : '/images/sofa.avif'}
+                src={
+                  (Array.isArray(product.media) && product.media[0]?.url ? String(product.media[0].url) : '') ||
+                  (Array.isArray(product.images) && product.images[0] ? String(product.images[0]) : '') ||
+                  '/images/sofa.avif'
+                }
                 alt={product.name}
                 className="prep-side-img"
               />
@@ -524,7 +534,7 @@ export default function StaffPreparationPage() {
                 </div>
                 <div className="ship-dl-row">
                   <dt>Product images</dt>
-                  <dd>{(product.images?.length ?? 0) + evidenceFiles.length}</dd>
+                  <dd>{(product.media?.length ?? product.images?.length ?? 0) + evidenceFiles.length}</dd>
                 </div>
                 <div className="ship-dl-row">
                   <dt>Available stock</dt>

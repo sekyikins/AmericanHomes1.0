@@ -1,7 +1,7 @@
 'use client';
 
 import { StaffModal } from '@/components/staff/StaffModal';
-import { Button } from '@/components/ui';
+import { Button, SearchableSelect } from '@/components/ui';
 import { ArrowRight, ImagePlus } from 'lucide-react';
 import type { FormEvent } from 'react';
 
@@ -29,7 +29,7 @@ interface ProductRecordModalProps {
   onBrandChange: (value: string) => void;
   onModelChange: (value: string) => void;
   onDefectDisclosureChange: (value: string) => void;
-  onImageChange: (name: string, previewUrl: string) => void;
+  onImageChange: (name: string, previewUrl: string, mimetype?: string) => void;
   onRequestTogglePublication: () => void;
   onSubmit: (e: FormEvent) => void;
   onClose: () => void;
@@ -147,21 +147,24 @@ export function ProductRecordModal({
             />
           </label>
 
-          <label className="login-field">
+          <div className="login-field">
             <span>Shipment association</span>
-            <select
-              className="staff-field-select"
+            <SearchableSelect
+              ariaLabel="Shipment association"
+              options={[
+                { value: '', label: 'Warehouse / Direct', searchText: 'Warehouse Direct' },
+                ...shipmentOptions.map((ref) => ({
+                  value: ref,
+                  label: ref,
+                  searchText: ref,
+                })),
+              ]}
               value={shipment}
-              onChange={(e) => onShipmentChange(e.target.value)}
-            >
-              <option value="">Warehouse / Direct</option>
-              {shipmentOptions.map((ref) => (
-                <option key={ref} value={ref}>
-                  {ref}
-                </option>
-              ))}
-            </select>
-          </label>
+              onChange={onShipmentChange}
+              placeholder="Warehouse / Direct"
+              searchPlaceholder="Type shipment reference…"
+            />
+          </div>
         </div>
 
         <label className="login-field">
@@ -209,7 +212,13 @@ export function ProductRecordModal({
             onChange={(e) => {
               const file = e.target.files?.[0];
               if (file) {
-                onImageChange(file.name, URL.createObjectURL(file));
+                const reader = new FileReader();
+                reader.onload = () => {
+                  if (typeof reader.result === 'string') {
+                    onImageChange(file.name, reader.result, file.type || 'image/jpeg');
+                  }
+                };
+                reader.readAsDataURL(file);
               }
             }}
           />

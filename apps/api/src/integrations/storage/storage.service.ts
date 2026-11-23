@@ -28,7 +28,7 @@ export class StorageService {
     buffer: Buffer,
     mimetype: string,
     bucket?: string,
-  ): Promise<{ path: string; bucket: string }> {
+  ): Promise<{ path: string; bucket: string; publicUrl: string }> {
     const { supabaseUrl, serviceKey, targetBucket } = this.getCredentials(bucket);
     const objectPath = this.normalizePath(path);
 
@@ -49,7 +49,11 @@ export class StorageService {
       throw new InternalServerErrorException('Failed to upload file to Supabase Storage');
     }
 
-    return { bucket: targetBucket, path: objectPath };
+    return {
+      bucket: targetBucket,
+      path: objectPath,
+      publicUrl: `${supabaseUrl}/storage/v1/object/public/${targetBucket}/${objectPath}`,
+    };
   }
 
   async getSignedUrl(path: string, expiresIn = 3600, bucket?: string): Promise<string> {

@@ -146,18 +146,16 @@ export function ReviewReturnModal({
             <div className="req-row-2" style={{ marginBottom: 12 }}>
               <label className="login-field">
                 <span>Returned item</span>
-                <select
-                  className="staff-field-select"
+                <SearchableSelect
                   value={selectedVariantId}
-                  onChange={(e) => onVariantChange(e.target.value)}
-                  style={{ borderRadius: 0 }}
-                >
-                  {selected.orderLines.map((l) => (
-                    <option key={l.id} value={l.variantId}>
-                      {l.label} (Qty {l.quantity})
-                    </option>
-                  ))}
-                </select>
+                  onChange={onVariantChange}
+                  options={selected.orderLines.map((l) => ({
+                    value: l.variantId,
+                    label: `${l.label} (Qty ${l.quantity})`,
+                  }))}
+                  placeholder="Select returned item…"
+                  searchPlaceholder="Search order items…"
+                />
               </label>
               <label className="login-field">
                 <span>Returned quantity</span>

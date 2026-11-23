@@ -1,7 +1,7 @@
 'use client';
 
 import { StaffModal } from '@/components/staff/StaffModal';
-import { Button } from '@/components/ui';
+import { Button, SearchableSelect } from '@/components/ui';
 import { ArrowRight } from 'lucide-react';
 import type { FormEvent } from 'react';
 import type { DemandMode } from './demandConfig';
@@ -65,52 +65,55 @@ export function DemandCreateModal({
 
       <form onSubmit={onSubmit}>
         {mode === 'sourcing' && (
-          <label className="login-field">
+          <div className="login-field">
             <span>Shipment</span>
-            <select
-              className="staff-field-select"
+            <SearchableSelect
+              ariaLabel="Shipment"
+              options={shipments.map((s) => ({
+                value: s.id,
+                label: s.reference,
+                searchText: s.reference,
+              }))}
               value={newShipmentId}
-              onChange={(e) => onShipmentIdChange(e.target.value)}
-            >
-              {shipments.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.reference}
-                </option>
-              ))}
-            </select>
-          </label>
+              onChange={onShipmentIdChange}
+              placeholder="Select shipment…"
+              searchPlaceholder="Type shipment reference…"
+            />
+          </div>
         )}
 
         {mode === 'allocations' ? (
           <>
-            <label className="login-field">
+            <div className="login-field">
               <span>Product request</span>
-              <select
-                className="staff-field-select"
+              <SearchableSelect
+                ariaLabel="Product request"
+                options={requestOptions.map((r) => ({
+                  value: r.id,
+                  label: r.label,
+                  searchText: r.label,
+                }))}
                 value={newRequestId}
-                onChange={(e) => onRequestIdChange(e.target.value)}
-              >
-                {requestOptions.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="login-field">
+                onChange={onRequestIdChange}
+                placeholder="Select product request…"
+                searchPlaceholder="Type request ref or product…"
+              />
+            </div>
+            <div className="login-field">
               <span>Stock variant</span>
-              <select
-                className="staff-field-select"
+              <SearchableSelect
+                ariaLabel="Stock variant"
+                options={variants.map((v) => ({
+                  value: v.id,
+                  label: v.label,
+                  searchText: v.label,
+                }))}
                 value={newVariantId}
-                onChange={(e) => onVariantIdChange(e.target.value)}
-              >
-                {variants.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+                onChange={onVariantIdChange}
+                placeholder="Select stock variant…"
+                searchPlaceholder="Type product name or SKU…"
+              />
+            </div>
           </>
         ) : (
           <>

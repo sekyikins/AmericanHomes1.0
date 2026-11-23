@@ -7,7 +7,7 @@ import {
   SortableHeader,
 } from '@/components/staff/TableControls';
 import { ConfirmDialog, EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
-import { catalogueApi, shipmentsApi } from '@/lib/api';
+import { catalogueApi, governanceApi, shipmentsApi } from '@/lib/api';
 import {
   applyFiltersAndSort,
   cycleSort,
@@ -79,6 +79,7 @@ function StaffProductsContent() {
   const [defectDisclosure, setDefectDisclosure] = useState('');
   const [imageName, setImageName] = useState('');
   const [imagePreview, setImagePreview] = useState('');
+  const [imageMimetype, setImageMimetype] = useState('');
 
   const loadProducts = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -93,7 +94,9 @@ function StaffProductsContent() {
         brand?: string;
         model?: string;
         published?: boolean;
+        isPublished?: boolean;
         images?: string[];
+        media?: Array<{ url?: string }>;
         defectDisclosure?: string;
         onboarding?: {
           inspected?: boolean;
@@ -122,8 +125,11 @@ function StaffProductsContent() {
           shipment: 'Warehouse',
           preparation: prepDone ? 'Complete' : 'In progress',
           availableCount,
-          publication: r.published ? 'Published' : 'Draft',
-          image: Array.isArray(r.images) && r.images[0] ? String(r.images[0]) : '/images/sofa.avif',
+          publication: (r.isPublished ?? r.published) ? 'Published' : 'Draft',
+          image:
+            (Array.isArray(r.media) && r.media[0]?.url ? String(r.media[0].url) : '') ||
+            (Array.isArray(r.images) && r.images[0] ? String(r.images[0]) : '') ||
+            '/images/sofa.avif',
           description: r.description ?? '',
           defectDisclosure: r.defectDisclosure ?? undefined,
           brand: r.brand ?? '',
@@ -279,13 +285,24 @@ function StaffProductsContent() {
     setSaving(true);
     try {
       if (modalMode === 'create') {
-        await catalogueApi.createProduct({
+        const created = (await catalogueApi.createProduct({
           name: name.trim(),
           category: category.toLowerCase().replace(/\s+/g, '-'),
           description: description.trim() || undefined,
           brand: brand.trim() || undefined,
           model: model.trim() || undefined,
-        });
+        })) as { id?: string };
+        if (created?.id && imagePreview.startsWith('data:')) {
+          const uploaded = await governanceApi.uploadFile({
+            folder: 'products',
+            filename: imageName || 'product.jpg',
+            mimetype: imageMimetype || 'image/jpeg',
+            base64: imagePreview,
+          });
+          if (uploaded.publicUrl) {
+            await catalogueApi.addProductMedia(created.id, uploaded.publicUrl);
+          }
+        }
         setModalMode(null);
         showToast('New product draft created', 'success');
         await loadProducts(true);
@@ -298,6 +315,17 @@ function StaffProductsContent() {
           model: model.trim() || undefined,
           defectDisclosure: defectDisclosure.trim() || undefined,
         });
+        if (imagePreview.startsWith('data:')) {
+          const uploaded = await governanceApi.uploadFile({
+            folder: 'products',
+            filename: imageName || 'product.jpg',
+            mimetype: imageMimetype || 'image/jpeg',
+            base64: imagePreview,
+          });
+          if (uploaded.publicUrl) {
+            await catalogueApi.addProductMedia(editingProduct.id, uploaded.publicUrl);
+          }
+        }
         setModalMode(null);
         showToast('Product record updated', 'success');
         await loadProducts(true);
@@ -498,9 +526,10 @@ function StaffProductsContent() {
         onBrandChange={setBrand}
         onModelChange={setModel}
         onDefectDisclosureChange={setDefectDisclosure}
-        onImageChange={(nextName, nextPreview) => {
+        onImageChange={(nextName, nextPreview, nextMime) => {
           setImageName(nextName);
           setImagePreview(nextPreview);
+          setImageMimetype(nextMime ?? '');
         }}
         onRequestTogglePublication={() => setConfirmPublicationToggle(true)}
         onSubmit={handleSubmit}

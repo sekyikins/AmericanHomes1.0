@@ -1,10 +1,14 @@
 import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
+import { AuditService } from '../audit/audit.service';
 import { CreatePermissionGroupDto } from './dto/create-permission-group.dto';
 
 @Injectable()
 export class PermissionsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   async getStaffPermissions(staffId: string): Promise<string[]> {
     const assignments = await this.prisma.staffGroupAssignment.findMany({
@@ -36,7 +40,7 @@ export class PermissionsService {
     return group;
   }
 
-  async createGroup(dto: CreatePermissionGroupDto) {
+  async createGroup(dto: CreatePermissionGroupDto, actorId?: string) {
     const existing = await this.prisma.permissionGroup.findUnique({ where: { name: dto.name } });
     if (existing) {
       throw new ConflictException(`Permission group "${dto.name}" already exists`);
@@ -51,7 +55,7 @@ export class PermissionsService {
       });
       permissions.push(perm);
     }
-    return this.prisma.permissionGroup.create({
+    const group = await this.prisma.permissionGroup.create({
       data: {
         name: dto.name,
         description: dto.description,
@@ -61,9 +65,17 @@ export class PermissionsService {
       },
       include: { permissions: { include: { permission: true } } },
     });
+    await this.audit.record({
+      actorId,
+      action: 'PERMISSION_GROUP_CREATED',
+      entityType: 'PermissionGroup',
+      entityId: group.id,
+      after: { name: group.name, permissionCodes: codes },
+    });
+    return group;
   }
 
-  async updateGroup(id: string, dto: Partial<CreatePermissionGroupDto>) {
+  async updateGroup(id: string, dto: Partial<CreatePermissionGroupDto>, actorId?: string) {
     const existing = await this.prisma.permissionGroup.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException(`PermissionGroup ${id} not found`);
     if (existing.name.toLowerCase() === 'owner') {
@@ -88,7 +100,7 @@ export class PermissionsService {
       permissions.push(perm);
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const updated = await this.prisma.$transaction(async (tx) => {
       if (dto.permissionCodes) {
         await tx.groupPermission.deleteMany({ where: { groupId: id } });
       }
@@ -104,5 +116,14 @@ export class PermissionsService {
         include: { permissions: { include: { permission: true } } },
       });
     });
+    await this.audit.record({
+      actorId,
+      action: 'PERMISSION_GROUP_UPDATED',
+      entityType: 'PermissionGroup',
+      entityId: id,
+      before: { name: existing.name, description: existing.description },
+      after: { name: updated.name, description: updated.description, permissionCodes: codes },
+    });
+    return updated;
   }
 }

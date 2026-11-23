@@ -1,7 +1,7 @@
 'use client';
 
 import { StaffModal } from '@/components/staff/StaffModal';
-import { Button, TableSkeleton } from '@/components/ui';
+import { Button, SearchableSelect, TableSkeleton } from '@/components/ui';
 import type { FormEvent } from 'react';
 
 export interface StockInventoryOption {
@@ -136,20 +136,21 @@ export function StockActionModal({
             balances change.
           </p>
           <form onSubmit={onSubmit}>
-            <label className="login-field">
+            <div className="login-field">
               <span>Product variant</span>
-              <select
-                className="staff-field-select"
+              <SearchableSelect
+                ariaLabel="Product variant"
+                options={rows.map((r) => ({
+                  value: r.id,
+                  label: `${r.product} · ${r.variant} (${r.identifier})`,
+                  searchText: `${r.product} ${r.variant} ${r.identifier}`,
+                }))}
                 value={adjVariantId}
-                onChange={(e) => onAdjVariantChange(e.target.value)}
-              >
-                {rows.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.product} · {r.variant} ({r.identifier})
-                  </option>
-                ))}
-              </select>
-            </label>
+                onChange={onAdjVariantChange}
+                placeholder="Select product variant…"
+                searchPlaceholder="Type product name or SKU…"
+              />
+            </div>
 
             <div className="req-row-2">
               <label className="login-field">

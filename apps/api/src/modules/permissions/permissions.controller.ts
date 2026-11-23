@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth } from '@nestjs/swagger';
 import { PERMISSIONS } from '../../common/constants/permissions';
+import { AuthenticatedUser, CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/permissions.decorator';
 import { AuthGuard } from '../../common/guards/auth.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
@@ -27,13 +28,17 @@ export class PermissionsController {
 
   @Post('groups')
   @RequirePermission(PERMISSIONS.PERMISSIONS.MANAGE)
-  create(@Body() dto: CreatePermissionGroupDto) {
-    return this.permissions.createGroup(dto);
+  create(@Body() dto: CreatePermissionGroupDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.permissions.createGroup(dto, user.id);
   }
 
   @Patch('groups/:id')
   @RequirePermission(PERMISSIONS.PERMISSIONS.MANAGE)
-  update(@Param('id') id: string, @Body() dto: Partial<CreatePermissionGroupDto>) {
-    return this.permissions.updateGroup(id, dto);
+  update(
+    @Param('id') id: string,
+    @Body() dto: Partial<CreatePermissionGroupDto>,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.permissions.updateGroup(id, dto, user.id);
   }
 }

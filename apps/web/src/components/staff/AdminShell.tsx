@@ -67,7 +67,7 @@ const NAV_SECTIONS: NavSection[] = [
       { label: 'Shipments', href: '/staff/shipments', Icon: Truck, permission: 'shipments.view' },
       { label: 'Receiving', href: '/staff/receiving', Icon: PackageCheck, permission: 'receiving.view' },
       { label: 'Product catalogue', href: '/staff/products', Icon: Store, permission: 'catalogue.view' },
-      { label: 'Preparation', href: '/staff/preparation', Icon: ListChecks, permission: 'catalogue.manage' },
+      { label: 'Preparation', href: '/staff/preparation', Icon: ListChecks, permission: 'catalogue.update' },
       { label: 'Inventory & stocktakes', href: '/staff/inventory', Icon: Warehouse, permission: 'inventory.view' },
     ],
   },
@@ -304,8 +304,12 @@ export function AdminShell({ children }: { children: ReactNode }) {
       >
         <div className="admin-brand-row">
           <Link href="/staff/dashboard" className="admin-brand">
-            <span className="admin-brand-mark" aria-hidden="true">
-              <Home size={16} strokeWidth={2.2} />
+            <span className="admin-brand-mark" aria-hidden="true" style={{ overflow: 'hidden', padding: 0 }}>
+              <img
+                src="/images/americanhomes-emblem.png"
+                alt=""
+                style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+              />
             </span>
             {!isSidebarCollapsed && (
               <span className="admin-brand-text">

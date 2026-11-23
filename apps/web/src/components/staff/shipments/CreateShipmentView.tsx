@@ -4,8 +4,8 @@ import {
   ProductVariantCombobox,
   type ProductVariantOption,
 } from '@/components/staff/ProductVariantCombobox';
-import { Button } from '@/components/ui';
-import { ArrowLeft, Plus, Trash2 } from 'lucide-react';
+import { Button, SearchableSelect } from '@/components/ui';
+import { ArrowLeft, Plus, Sparkles, Trash2 } from 'lucide-react';
 import type { FormEvent } from 'react';
 
 export type DraftManifestRow = {
@@ -14,6 +14,15 @@ export type DraftManifestRow = {
   product: string;
   variant: string;
   qty: number;
+};
+
+export type ApprovedRequestSuggestion = {
+  id: string;
+  reference: string;
+  productName: string;
+  category: string;
+  quantity: number;
+  customerName?: string;
 };
 
 type CreateShipmentViewProps = {
@@ -34,6 +43,7 @@ type CreateShipmentViewProps = {
   draftManifest: DraftManifestRow[];
   setDraftManifest: React.Dispatch<React.SetStateAction<DraftManifestRow[]>>;
   variantOptions: ProductVariantOption[];
+  approvedRequests?: ApprovedRequestSuggestion[];
   onAddRow: () => void;
   onRemoveRow: (id: string) => void;
   onBack: () => void;
@@ -58,6 +68,7 @@ export function CreateShipmentView({
   draftManifest,
   setDraftManifest,
   variantOptions,
+  approvedRequests = [],
   onAddRow,
   onRemoveRow,
   onBack,
@@ -95,17 +106,16 @@ export function CreateShipmentView({
 
             <label className="login-field">
               <span>Shipping provider</span>
-              <select
-                className="staff-field-select"
+              <SearchableSelect
                 value={newProvider}
-                onChange={(e) => setNewProvider(e.target.value)}
-              >
-                {providerOptions.map((prov) => (
-                  <option key={prov} value={prov}>
-                    {prov}
-                  </option>
-                ))}
-              </select>
+                onChange={setNewProvider}
+                options={providerOptions.map((prov) => ({
+                  value: prov,
+                  label: prov,
+                }))}
+                placeholder="Select shipping provider…"
+                searchPlaceholder="Search providers…"
+              />
             </label>
 
             <label className="login-field">
@@ -173,6 +183,93 @@ export function CreateShipmentView({
               <span>Add item</span>
             </button>
           </div>
+
+          {approvedRequests.length > 0 && (
+            <div
+              style={{
+                marginTop: 12,
+                marginBottom: 14,
+                padding: '12px 14px',
+                borderRadius: 10,
+                border: '1px solid rgba(13, 99, 61, 0.22)',
+                background: 'rgba(13, 99, 61, 0.04)',
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: 'var(--green)',
+                  marginBottom: 8,
+                }}
+              >
+                <Sparkles size={14} />
+                <span>Suggested from approved customer product requests ({approvedRequests.length})</span>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {approvedRequests.map((req) => {
+                  const alreadyAdded = draftManifest.some(
+                    (row) => row.product.trim().toLowerCase() === req.productName.trim().toLowerCase(),
+                  );
+                  return (
+                    <div
+                      key={req.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 10,
+                        padding: '6px 10px',
+                        borderRadius: 8,
+                        background: '#ffffff',
+                        border: '1px solid var(--border-subtle)',
+                        fontSize: 12,
+                      }}
+                    >
+                      <div>
+                        <strong style={{ color: 'var(--navy)' }}>{req.productName}</strong>
+                        <span style={{ color: 'var(--text-muted)', marginLeft: 6 }}>
+                          {req.reference} · Qty {req.quantity}
+                          {req.customerName ? ` · ${req.customerName}` : ''}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={alreadyAdded}
+                        onClick={() => {
+                          setDraftManifest((prev) => {
+                            const hasOnlyEmptyRow =
+                              prev.length === 1 && !prev[0].product.trim() && !prev[0].variantId;
+                            const newRow: DraftManifestRow = {
+                              id: `dm-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                              product: req.productName,
+                              variant: req.category,
+                              qty: Math.max(1, req.quantity || 1),
+                            };
+                            return hasOnlyEmptyRow ? [newRow] : [...prev, newRow];
+                          });
+                        }}
+                        style={{
+                          border: 'none',
+                          borderRadius: 6,
+                          padding: '4px 9px',
+                          fontSize: 11,
+                          fontWeight: 700,
+                          cursor: alreadyAdded ? 'default' : 'pointer',
+                          background: alreadyAdded ? 'var(--bg-subtle)' : 'var(--green)',
+                          color: alreadyAdded ? 'var(--text-muted)' : '#ffffff',
+                        }}
+                      >
+                        {alreadyAdded ? 'Added' : '+ Add to manifest'}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {draftManifest.map((row, idx) => (
             <div key={row.id} className="ship-manifest-row">

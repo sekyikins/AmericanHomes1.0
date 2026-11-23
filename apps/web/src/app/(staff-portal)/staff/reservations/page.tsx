@@ -71,7 +71,7 @@ export default function StaffReservationsPage() {
 
   const loadVariants = useCallback(async () => {
     if (variants.length > 0) return;
-    const prodList = await catalogueApi.listAdmin().catch(() => []);
+    const prodList = await catalogueApi.listAdmin().catch(() => catalogueApi.listPublished().catch(() => []));
     const opts: VariantOpt[] = [];
     for (const p of (Array.isArray(prodList) ? prodList : []) as Array<{
       name: string;

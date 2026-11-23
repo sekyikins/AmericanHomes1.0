@@ -59,6 +59,17 @@ export class CatalogueController {
     return this.catalogue.createVariant(id, dto);
   }
 
+  @Post('products/:id/media')
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission(PERMISSIONS.CATALOGUE.UPDATE)
+  addProductMedia(
+    @Param('id') id: string,
+    @Body() dto: { url: string; type?: string },
+  ) {
+    return this.catalogue.addProductMedia(id, dto.url, dto.type);
+  }
+
   @Post('products/:id/preparation')
   @ApiBearerAuth()
   @UseGuards(AuthGuard, PermissionsGuard)

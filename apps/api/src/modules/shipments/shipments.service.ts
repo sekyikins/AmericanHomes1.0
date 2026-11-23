@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PaginationDto, paginationParams } from '../../common/utils/pagination';
 import { PrismaService } from '../../database/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { CreateShipmentDto } from './dto/create-shipment.dto';
 import { ManifestRevisionDto } from './dto/manifest-revision.dto';
 
@@ -13,7 +14,66 @@ export class ShipmentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly notifications: NotificationsService,
   ) {}
+
+  private async notifyLinkedProductRequests(
+    shipmentId: string,
+    shipmentRef: string,
+    stage: 'IN_TRANSIT' | 'CLOSED',
+  ) {
+    const sourcingItems = await this.prisma.shipmentSourcingItem.findMany({
+      where: { shipmentId },
+      include: { group: { include: { members: { include: { request: true } } } } },
+    });
+    const latestManifest = await this.prisma.manifestRevision.findFirst({
+      where: { shipmentId },
+      orderBy: { revision: 'desc' },
+      include: { items: true },
+    });
+    const manifestNames = (latestManifest?.items ?? [])
+      .map((i) => i.productName.trim().toLowerCase())
+      .filter(Boolean);
+
+    const matchedByName = manifestNames.length
+      ? await this.prisma.productRequest.findMany({
+          where: {
+            status: { in: ['APPROVED_FOR_SOURCING', 'SOURCING'] },
+          },
+        })
+      : [];
+
+    const requestMap = new Map<string, { id: string; customerId: string; productName: string | null }>();
+    for (const sItem of sourcingItems) {
+      for (const member of sItem.group?.members ?? []) {
+        if (member.request) {
+          requestMap.set(member.request.id, member.request);
+        }
+      }
+    }
+    for (const req of matchedByName) {
+      if (req.productName && manifestNames.includes(req.productName.trim().toLowerCase())) {
+        requestMap.set(req.id, req);
+      }
+    }
+
+    for (const req of requestMap.values()) {
+      const title =
+        stage === 'IN_TRANSIT'
+          ? 'Requested item in transit'
+          : 'Requested item ready for collection';
+      const body =
+        stage === 'IN_TRANSIT'
+          ? `Your approved product request for "${req.productName}" is now in transit on shipment ${shipmentRef}.`
+          : `Your requested item "${req.productName}" from shipment ${shipmentRef} has arrived and is ready for collection.`;
+      await this.notifications.notifyCustomerByProfileId(
+        req.customerId,
+        title,
+        body,
+        'REQUESTS',
+      );
+    }
+  }
 
   private invalidateListCache() {
     this.listCache.clear();
@@ -82,8 +142,8 @@ export class ShipmentsService {
     return shipment;
   }
 
-  create(dto: CreateShipmentDto) {
-    return this.prisma.shipment.create({
+  async create(dto: CreateShipmentDto, staffId?: string) {
+    const shipment = await this.prisma.shipment.create({
       data: {
         reference: dto.reference,
         providerName: dto.providerName,
@@ -91,9 +151,17 @@ export class ShipmentsService {
         notes: dto.notes,
       },
     });
+    await this.audit.record({
+      actorId: staffId,
+      action: 'SHIPMENT_CREATED',
+      entityType: 'Shipment',
+      entityId: shipment.id,
+      after: { reference: shipment.reference, providerName: shipment.providerName },
+    });
+    return shipment;
   }
 
-  async addManifestRevision(id: string, dto: ManifestRevisionDto) {
+  async addManifestRevision(id: string, dto: ManifestRevisionDto, staffId?: string) {
     const shipment = await this.prisma.shipment.findUnique({ where: { id } });
     if (!shipment) throw new NotFoundException(`Shipment ${id} not found`);
     if (!['PLANNED', 'IN_TRANSIT', 'ARRIVED'].includes(shipment.status)) {
@@ -102,7 +170,7 @@ export class ShipmentsService {
       );
     }
     const count = await this.prisma.manifestRevision.count({ where: { shipmentId: id } });
-    return this.prisma.manifestRevision.create({
+    const revision = await this.prisma.manifestRevision.create({
       data: {
         shipmentId: id,
         revision: count + 1,
@@ -111,15 +179,24 @@ export class ShipmentsService {
       },
       include: { items: true },
     });
+    await this.audit.record({
+      actorId: staffId,
+      action: 'SHIPMENT_MANIFEST_ADDED',
+      entityType: 'ManifestRevision',
+      entityId: revision.id,
+      after: { shipmentId: id, revision: revision.revision, itemCount: revision.items.length },
+    });
+    return revision;
   }
 
   async addTrackingEvent(
     shipmentId: string,
     dto: { event: string; location?: string; occurredAt?: string; notes?: string },
+    staffId?: string,
   ) {
     const shipment = await this.prisma.shipment.findUnique({ where: { id: shipmentId } });
     if (!shipment) throw new NotFoundException(`Shipment ${shipmentId} not found`);
-    return this.prisma.shipmentTrackingEvent.create({
+    const tracking = await this.prisma.shipmentTrackingEvent.create({
       data: {
         shipmentId,
         event: dto.event,
@@ -128,6 +205,14 @@ export class ShipmentsService {
         notes: dto.notes,
       },
     });
+    await this.audit.record({
+      actorId: staffId,
+      action: 'SHIPMENT_TRACKING_ADDED',
+      entityType: 'ShipmentTrackingEvent',
+      entityId: tracking.id,
+      after: { shipmentId, event: dto.event, location: dto.location },
+    });
+    return tracking;
   }
 
   async addExpense(
@@ -199,6 +284,9 @@ export class ShipmentsService {
       before: { status: existing.status },
       after: { status },
     });
+    if (status === 'IN_TRANSIT') {
+      await this.notifyLinkedProductRequests(shipmentId, updated.reference, 'IN_TRANSIT');
+    }
     return updated;
   }
 
@@ -247,6 +335,7 @@ export class ShipmentsService {
         overrideReason,
       },
     });
+    await this.notifyLinkedProductRequests(id, shipment.reference, 'CLOSED');
     return updated;
   }
 }

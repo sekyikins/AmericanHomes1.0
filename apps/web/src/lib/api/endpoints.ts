@@ -84,6 +84,8 @@ export const catalogueApi = {
     api.patch<unknown>(`/catalogue/products/${id}`, dto),
   createVariant: (productId: string, dto: Record<string, unknown>) =>
     api.post<unknown>(`/catalogue/products/${productId}/variants`, dto),
+  addProductMedia: (productId: string, url: string, type = 'IMAGE') =>
+    api.post<unknown>(`/catalogue/products/${productId}/media`, { url, type }),
   completePreparation: (productId: string, step: string, notes?: string) =>
     api.post<unknown>(`/catalogue/products/${productId}/preparation`, { step, notes }),
   proposePrice: (variantId: string, dto: Record<string, unknown>) =>
@@ -372,7 +374,7 @@ export const governanceApi = {
   updateSetting: (key: string, value: string) =>
     api.patch<unknown>(`/governance/settings/${key}`, { value }),
   uploadFile: (dto: { folder: string; filename: string; mimetype: string; base64: string }) =>
-    api.post<{ path: string; bucket: string }>('/governance/uploads', dto),
+    api.post<{ path: string; bucket: string; publicUrl?: string }>('/governance/uploads', dto),
   listStaffReports: () => api.get<Record<string, unknown>[]>('/governance/staff-reports'),
   createStaffReport: (dto: {
     title: string;

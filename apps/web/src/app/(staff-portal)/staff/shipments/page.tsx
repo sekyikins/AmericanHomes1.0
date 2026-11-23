@@ -17,6 +17,7 @@ import {
 } from '@/lib/tableUtils';
 import {
   CreateShipmentView,
+  type ApprovedRequestSuggestion,
   type DraftManifestRow,
 } from '@/components/staff/shipments/CreateShipmentView';
 import {
@@ -32,7 +33,7 @@ import {
   type ShipmentStatus,
 } from '@/components/staff/shipments/shipmentMapper';
 import { EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
-import { catalogueApi, governanceApi, receivingApi, shipmentsApi } from '@/lib/api';
+import { catalogueApi, governanceApi, receivingApi, requestsApi, shipmentsApi } from '@/lib/api';
 import { downloadCsv } from '@/lib/staffUtils';
 import { useToast } from '@/providers/toast.provider';
 import { ChevronRight, Download, Plus, Search } from 'lucide-react';
@@ -47,6 +48,7 @@ export default function StaffShipmentsPage() {
   const [statusUpdating, setStatusUpdating] = useState<string | null>(null);
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
   const [variantOptions, setVariantOptions] = useState<ProductVariantOption[]>([]);
+  const [approvedRequests, setApprovedRequests] = useState<ApprovedRequestSuggestion[]>([]);
   const [providerOptions, setProviderOptions] = useState<string[]>([
     'Atlantic Freight & Logistics',
     'OceanBridge Cargo',
@@ -86,10 +88,11 @@ export default function StaffShipmentsPage() {
     if (!silent) setLoading(true);
     setLoadError(null);
     try {
-      const [res, productsRes, settingsRes] = await Promise.all([
+      const [res, productsRes, settingsRes, requestsRes] = await Promise.all([
         shipmentsApi.list(),
         catalogueApi.listAdmin().catch(() => []),
         governanceApi.listSettings().catch(() => []),
+        requestsApi.list().catch(() => []),
       ]);
       const providersRow = (
         Array.isArray(settingsRes) ? (settingsRes as Array<{ key?: string; value?: string }>) : []
@@ -114,6 +117,25 @@ export default function StaffShipmentsPage() {
         }
       }
       setVariantOptions(opts);
+
+      const approved: ApprovedRequestSuggestion[] = (Array.isArray(requestsRes) ? requestsRes : [])
+        .filter((r) => {
+          const st = String(r.status ?? '');
+          return st === 'APPROVED_FOR_SOURCING' || st === 'SOURCING';
+        })
+        .map((r) => {
+          const customer = r.customer as { fullName?: string } | undefined;
+          return {
+            id: String(r.id ?? ''),
+            reference: String(r.reference ?? ''),
+            productName: String(r.productName ?? 'Requested Product'),
+            category: String(r.category ?? 'General'),
+            quantity: Number(r.quantity ?? 1),
+            customerName: customer?.fullName,
+          };
+        })
+        .filter((r) => Boolean(r.id));
+      setApprovedRequests(approved);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : 'Unable to load shipments.');
     } finally {
@@ -403,8 +425,9 @@ export default function StaffShipmentsPage() {
         draftManifest={draftManifest}
         setDraftManifest={setDraftManifest}
         variantOptions={variantOptions}
+        approvedRequests={approvedRequests}
         onAddRow={() =>
-          setDraftManifest((prev) => [...prev, { id: `dm-${Date.now()}`, product: '', variant: '', qty: 1 }])
+          setDraftManifest((prev) => [...prev, { id: `dm-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, product: '', variant: '', qty: 1 }])
         }
         onRemoveRow={(rowId) =>
           setDraftManifest((prev) => (prev.length > 1 ? prev.filter((r) => r.id !== rowId) : prev))

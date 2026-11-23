@@ -85,8 +85,12 @@ export class ProductRequestsService {
     });
     await this.notifications.notifyCustomerByProfileId(
       existing.customerId,
-      'Product request updated',
-      `Your request for "${existing.productName}" is now ${dto.decision}.`,
+      dto.decision === 'APPROVED_FOR_SOURCING'
+        ? 'Product request approved'
+        : 'Product request updated',
+      dto.decision === 'APPROVED_FOR_SOURCING'
+        ? `Your product request for "${existing.productName}" has been approved for sourcing.`
+        : `Your request for "${existing.productName}" is now ${dto.decision}.`,
       'REQUESTS',
     );
     return updated;
