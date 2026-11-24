@@ -1,7 +1,7 @@
 'use client';
 
 import { FileText, KeyRound, ShieldAlert, User } from 'lucide-react';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { StaffModal } from '@/components/staff/StaffModal';
 import { Button } from '@/components/ui';
 import { authApi, governanceApi } from '@/lib/api';
@@ -41,16 +41,39 @@ export function StaffAccountModal({
   const [isAnonymous, setIsAnonymous] = useState(false);
   const [submittingReport, setSubmittingReport] = useState(false);
 
+  const tabBarRef = useRef<HTMLDivElement | null>(null);
+  const tabRefs = useRef<Record<Tab, HTMLButtonElement | null>>({
+    profile: null,
+    password: null,
+    report: null,
+  });
+  const initializedUserIdRef = useRef<string | null>(null);
+
   useEffect(() => {
-    if (!user || !open) return;
+    if (!user) return;
+    if (initializedUserIdRef.current === user.id) return;
+    initializedUserIdRef.current = user.id;
     setName(user.name ?? '');
     setEmail(user.email ?? '');
     setPhone(user.phone ?? '');
-    setReason('');
-    setCurrentPassword('');
-    setNewPassword('');
-    setConfirmPassword('');
-  }, [user, open]);
+  }, [user]);
+
+  useEffect(() => {
+    if (!open) return;
+    const raf = window.requestAnimationFrame(() => {
+      const btn = tabRefs.current[tab];
+      const container = tabBarRef.current;
+      if (btn && container) {
+        const targetLeft =
+          btn.offsetLeft - container.clientWidth / 2 + btn.clientWidth / 2;
+        container.scrollTo({
+          left: Math.max(0, targetLeft),
+          behavior: 'smooth',
+        });
+      }
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [open, tab]);
 
   const handleRequestProfileChange = async (e: FormEvent) => {
     e.preventDefault();
@@ -164,8 +187,17 @@ export function StaffAccountModal({
         {user?.isOwner ? 'Owner account' : 'Authorised staff'} · {user?.email || 'No email'}
       </p>
 
-      <div className="ship-tabs-bar" role="tablist" aria-label="Account sections" style={{ marginTop: 16, marginBottom: 18 }}>
+      <div
+        ref={tabBarRef}
+        className="ship-tabs-bar"
+        role="tablist"
+        aria-label="Account sections"
+        style={{ marginTop: 16, marginBottom: 18 }}
+      >
         <button
+          ref={(el) => {
+            tabRefs.current.profile = el;
+          }}
           type="button"
           role="tab"
           aria-selected={tab === 'profile'}
@@ -176,6 +208,9 @@ export function StaffAccountModal({
           Account details
         </button>
         <button
+          ref={(el) => {
+            tabRefs.current.password = el;
+          }}
           type="button"
           role="tab"
           aria-selected={tab === 'password'}
@@ -186,6 +221,9 @@ export function StaffAccountModal({
           Password
         </button>
         <button
+          ref={(el) => {
+            tabRefs.current.report = el;
+          }}
           type="button"
           role="tab"
           aria-selected={tab === 'report'}

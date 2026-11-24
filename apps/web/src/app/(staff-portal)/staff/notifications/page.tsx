@@ -59,7 +59,11 @@ function StaffNotificationsContent() {
   const [incidents, setIncidents] = useState<IncidentItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  const [creatingPoll, setCreatingPoll] = useState(false);
+  const [publishingAnn, setPublishingAnn] = useState(false);
+  const [reportingInc, setReportingInc] = useState(false);
+  const [markingId, setMarkingId] = useState<string | null>(null);
+  const [markingAll, setMarkingAll] = useState(false);
 
   const [annTitle, setAnnTitle] = useState('');
   const [annBody, setAnnBody] = useState('');
@@ -127,25 +131,47 @@ function StaffNotificationsContent() {
   const unreadCount = items.filter((i) => i.unread).length;
 
   const markRead = async (id: string) => {
+    if (markingId === id || markingAll) return;
+    setMarkingId(id);
     try {
       await notificationsApi.markRead(id);
       setItems((prev) => prev.map((n) => (n.id === id ? { ...n, unread: false } : n)));
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('ah:notifications-updated'));
+      }
+      showToast('Message marked as read', 'success');
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Unable to mark read', 'error');
+    } finally {
+      setMarkingId(null);
     }
   };
 
   const markAllRead = async () => {
     const unread = items.filter((i) => i.unread);
-    await Promise.all(unread.map((i) => notificationsApi.markRead(i.id).catch(() => null)));
-    setItems((prev) => prev.map((n) => ({ ...n, unread: false })));
-    showToast('All notifications marked read', 'info');
+    if (unread.length === 0 || markingAll) return;
+    setMarkingAll(true);
+    try {
+      await Promise.all(unread.map((i) => notificationsApi.markRead(i.id)));
+      setItems((prev) => prev.map((n) => ({ ...n, unread: false })));
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('ah:notifications-updated'));
+      }
+      showToast(
+        unread.length === 1 ? 'Message marked as read' : 'All messages marked as read',
+        'success',
+      );
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Unable to mark notifications read', 'error');
+    } finally {
+      setMarkingAll(false);
+    }
   };
 
   const handlePublishAnnouncement = async (e: FormEvent) => {
     e.preventDefault();
-    if (submitting || !annTitle.trim() || !annBody.trim()) return;
-    setSubmitting(true);
+    if (publishingAnn || !annTitle.trim() || !annBody.trim()) return;
+    setPublishingAnn(true);
     try {
       await governanceApi.createAnnouncement({
         title: annTitle.trim(),
@@ -158,14 +184,14 @@ function StaffNotificationsContent() {
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Unable to publish announcement', 'error');
     } finally {
-      setSubmitting(false);
+      setPublishingAnn(false);
     }
   };
 
   const handleReportIncident = async (e: FormEvent) => {
     e.preventDefault();
-    if (submitting || !incDesc.trim()) return;
-    setSubmitting(true);
+    if (reportingInc || !incDesc.trim()) return;
+    setReportingInc(true);
     try {
       await governanceApi.createIncident({
         title: incDesc.trim(),
@@ -177,7 +203,7 @@ function StaffNotificationsContent() {
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Unable to log incident', 'error');
     } finally {
-      setSubmitting(false);
+      setReportingInc(false);
     }
   };
 
@@ -195,10 +221,16 @@ function StaffNotificationsContent() {
 
         <div className="dash-actions">
           {unreadCount > 0 && mainView === 'Inbox' && (
-            <button type="button" className="button" onClick={markAllRead}>
+            <Button
+              type="button"
+              variant="secondary"
+              loading={markingAll}
+              loadingText="Marking…"
+              onClick={markAllRead}
+            >
               <Check size={14} />
               <span>Mark all read</span>
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -257,14 +289,17 @@ function StaffNotificationsContent() {
                   </div>
                 </div>
                 {item.unread && (
-                  <button
+                  <Button
                     type="button"
-                    className="button"
+                    variant="secondary"
+                    loading={markingId === item.id}
+                    loadingText="Marking…"
+                    disabled={markingAll}
                     style={{ minHeight: 32, padding: '0 10px', fontSize: 12, flexShrink: 0 }}
                     onClick={() => markRead(item.id)}
                   >
                     Mark read
-                  </button>
+                  </Button>
                 )}
               </div>
             ))
@@ -281,8 +316,8 @@ function StaffNotificationsContent() {
           <form
             onSubmit={async (e) => {
               e.preventDefault();
-              if (!pollTitle.trim() || submitting) return;
-              setSubmitting(true);
+              if (!pollTitle.trim() || creatingPoll) return;
+              setCreatingPoll(true);
               try {
                 await governanceApi.createPoll({
                   title: pollTitle.trim(),
@@ -297,7 +332,7 @@ function StaffNotificationsContent() {
               } catch (err) {
                 showToast(err instanceof Error ? err.message : 'Failed to create poll', 'error');
               } finally {
-                setSubmitting(false);
+                setCreatingPoll(false);
               }
             }}
             style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16, alignItems: 'center' }}
@@ -323,7 +358,13 @@ function StaffNotificationsContent() {
               onChange={(e) => setPollClosesAt(e.target.value)}
               style={{ flex: '1 1 190px', padding: '9px 10px', border: '0.8px solid var(--line)', borderRadius: 4, fontSize: 12.5 }}
             />
-            <Button type="submit" variant="primary" loading={submitting} loadingText="Creating…">
+            <Button
+              type="submit"
+              variant="primary"
+              loading={creatingPoll}
+              loadingText="Creating…"
+              disabled={!pollTitle.trim()}
+            >
               Create poll
             </Button>
           </form>
@@ -413,9 +454,15 @@ function StaffNotificationsContent() {
                   }}
                 />
               </label>
-              <button type="submit" className="button primary" disabled={submitting}>
+              <Button
+                type="submit"
+                variant="primary"
+                loading={publishingAnn}
+                loadingText="Publishing…"
+                disabled={!annTitle.trim() || !annBody.trim()}
+              >
                 Publish announcement
-              </button>
+              </Button>
             </form>
             {announcements.map((a) => (
               <div key={a.id} style={{ padding: '10px 0', borderTop: '0.8px solid var(--line)' }}>
@@ -452,9 +499,15 @@ function StaffNotificationsContent() {
                   }}
                 />
               </label>
-              <button type="submit" className="button primary" disabled={submitting}>
+              <Button
+                type="submit"
+                variant="primary"
+                loading={reportingInc}
+                loadingText="Logging…"
+                disabled={!incDesc.trim()}
+              >
                 Log incident
-              </button>
+              </Button>
             </form>
             {incidents.map((inc) => (
               <div

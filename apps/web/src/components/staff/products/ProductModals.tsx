@@ -2,35 +2,42 @@
 
 import { StaffModal } from '@/components/staff/StaffModal';
 import { Button, SearchableSelect } from '@/components/ui';
-import { ArrowRight, ImagePlus } from 'lucide-react';
+import { ArrowRight, RotateCcw, Wrench } from 'lucide-react';
 import type { FormEvent } from 'react';
+
+export type PreparationStatusLabel = 'Not Started' | 'In Progress' | 'Prepared';
 
 interface ProductRecordModalProps {
   modalMode: 'create' | 'edit' | null;
   editingIdentifier?: string;
   editingPublication?: 'Published' | 'Draft';
-  editingPreparation?: 'Complete' | 'In progress';
+  editingPreparation?: PreparationStatusLabel;
   editingAvailableCount?: number;
   name: string;
   category: string;
   shipment: string;
   shipmentOptions: string[];
+  initialQuantity?: string;
   description: string;
   brand: string;
   model: string;
   defectDisclosure: string;
-  imageName: string;
-  imagePreview: string;
+  saving?: boolean;
   togglingPublication: boolean;
+  restartingPreparation?: boolean;
+  editingPreparationLoading?: boolean;
   onNameChange: (value: string) => void;
   onCategoryChange: (value: string) => void;
   onShipmentChange: (value: string) => void;
+  onInitialQuantityChange?: (value: string) => void;
   onDescriptionChange: (value: string) => void;
   onBrandChange: (value: string) => void;
   onModelChange: (value: string) => void;
   onDefectDisclosureChange: (value: string) => void;
-  onImageChange: (name: string, previewUrl: string, mimetype?: string) => void;
   onRequestTogglePublication: () => void;
+  onOpenPreparation?: () => void;
+  onEditPreparation?: () => void;
+  onRestartPreparation?: () => void;
   onSubmit: (e: FormEvent) => void;
   onClose: () => void;
 }
@@ -39,31 +46,41 @@ export function ProductRecordModal({
   modalMode,
   editingIdentifier,
   editingPublication,
-  editingPreparation,
-  editingAvailableCount = 0,
+  editingPreparation = 'Not Started',
   name,
   category,
   shipment,
   shipmentOptions,
+  initialQuantity = '1',
   description,
   brand,
   model,
   defectDisclosure,
-  imageName,
-  imagePreview,
+  saving = false,
   togglingPublication,
+  restartingPreparation = false,
+  editingPreparationLoading = false,
   onNameChange,
   onCategoryChange,
   onShipmentChange,
+  onInitialQuantityChange,
   onDescriptionChange,
   onBrandChange,
   onModelChange,
   onDefectDisclosureChange,
-  onImageChange,
   onRequestTogglePublication,
+  onOpenPreparation,
+  onEditPreparation,
+  onRestartPreparation,
   onSubmit,
   onClose,
 }: ProductRecordModalProps) {
+  const prepTone =
+    editingPreparation === 'Prepared'
+      ? 'green'
+      : editingPreparation === 'In Progress'
+        ? 'amber'
+        : 'gray';
   return (
     <StaffModal
       open={Boolean(modalMode)}
@@ -92,7 +109,16 @@ export function ProductRecordModal({
           {modalMode === 'create' ? 'NEW RECORD' : editingIdentifier ?? 'RECORD'}
         </span>
         {modalMode === 'edit' && (
-          <span className="acct-pill amber">● Action required</span>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <span className={`acct-pill ${prepTone}`}>● {editingPreparation}</span>
+            <span
+              className={`acct-pill ${
+                editingPublication === 'Published' ? 'green' : 'gray'
+              }`}
+            >
+              ● {editingPublication ?? 'Draft'}
+            </span>
+          </div>
         )}
       </div>
 
@@ -100,9 +126,103 @@ export function ProductRecordModal({
         {modalMode === 'create' ? 'Create product draft' : 'Product record'}
       </h2>
       <p className="login-sub">
-        Draft records remain private until preparation and publication approval
-        are complete.
+        Draft records remain private until preparation is complete, after which they are
+        automatically published.
       </p>
+
+      {modalMode === 'edit' && (
+        <div
+          style={{
+            padding: '12px 14px',
+            marginBottom: 14,
+            background: '#f7f9f8',
+            border: '0.8px solid var(--line)',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: 10,
+            flexWrap: 'wrap',
+          }}
+        >
+          <div>
+            <strong style={{ display: 'block', fontSize: 12.5, color: 'var(--ink)' }}>
+              Preparation status: {editingPreparation}
+            </strong>
+            <small style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+              {editingPreparation === 'Prepared'
+                ? 'All preparation steps are completed. You can edit or restart preparation if updates are needed.'
+                : 'Complete all preparation steps in the Preparation workspace to publish this product.'}
+            </small>
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {editingPreparation === 'Prepared' ? (
+              <>
+                {onEditPreparation && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    loading={editingPreparationLoading}
+                    loadingText="Opening…"
+                    disabled={restartingPreparation || saving}
+                    style={{ minHeight: 32, padding: '0 10px', fontSize: 12, background: '#fff' }}
+                    onClick={onEditPreparation}
+                  >
+                    <Wrench size={13} />
+                    <span>Edit preparation</span>
+                  </Button>
+                )}
+                {onRestartPreparation && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    loading={restartingPreparation}
+                    loadingText="Restarting…"
+                    disabled={editingPreparationLoading || saving}
+                    style={{ minHeight: 32, padding: '0 10px', fontSize: 12, background: '#fff' }}
+                    onClick={onRestartPreparation}
+                  >
+                    <RotateCcw size={13} />
+                    <span>Restart preparation</span>
+                  </Button>
+                )}
+              </>
+            ) : (
+              <>
+                {editingPreparation === 'In Progress' && onRestartPreparation && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    loading={restartingPreparation}
+                    loadingText="Restarting…"
+                    disabled={saving}
+                    style={{ minHeight: 32, padding: '0 10px', fontSize: 12, background: '#fff' }}
+                    onClick={onRestartPreparation}
+                  >
+                    <RotateCcw size={13} />
+                    <span>Restart preparation</span>
+                  </Button>
+                )}
+                {onOpenPreparation && (
+                  <Button
+                    type="button"
+                    variant="primary"
+                    disabled={restartingPreparation || saving}
+                    style={{ minHeight: 32, padding: '0 12px', fontSize: 12 }}
+                    onClick={onOpenPreparation}
+                  >
+                    <span>
+                      {editingPreparation === 'Not Started'
+                        ? 'Start preparation'
+                        : 'Continue preparation'}
+                    </span>
+                    <ArrowRight size={13} />
+                  </Button>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       <form onSubmit={onSubmit}>
         <div className="req-row-2">
@@ -167,6 +287,20 @@ export function ProductRecordModal({
           </div>
         </div>
 
+        {modalMode === 'create' && onInitialQuantityChange && (
+          <label className="login-field">
+            <span>Received quantity (entering preparation)</span>
+            <input
+              type="number"
+              min={1}
+              value={initialQuantity}
+              onChange={(e) => onInitialQuantityChange(e.target.value)}
+              placeholder="1"
+              required
+            />
+          </label>
+        )}
+
         <label className="login-field">
           <span>Description</span>
           <textarea
@@ -205,42 +339,6 @@ export function ProductRecordModal({
           </label>
         </div>
 
-        <label className="prod-upload-box" style={{ width: '100%' }}>
-          <input
-            type="file"
-            accept="image/*"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) {
-                const reader = new FileReader();
-                reader.onload = () => {
-                  if (typeof reader.result === 'string') {
-                    onImageChange(file.name, reader.result, file.type || 'image/jpeg');
-                  }
-                };
-                reader.readAsDataURL(file);
-              }
-            }}
-          />
-          {imagePreview ? (
-            <img
-              src={imagePreview}
-              alt={imageName || 'Selected product image'}
-              className="prod-upload-preview"
-            />
-          ) : (
-            <ImagePlus size={20} color="var(--green)" />
-          )}
-          <strong>
-            {imageName
-              ? `Selected: ${imageName}`
-              : imagePreview
-                ? 'Replace product image'
-                : 'Add product images'}
-          </strong>
-          <span>Images can be completed during preparation</span>
-        </label>
-
         <label className="login-field">
           <span>Defect disclosure</span>
           <input
@@ -255,8 +353,7 @@ export function ProductRecordModal({
             display: 'flex',
             justifyContent:
               modalMode === 'edit' &&
-              (editingPublication === 'Published' ||
-                (editingPreparation === 'Complete' && editingAvailableCount > 0))
+              (editingPublication === 'Published' || editingPreparation === 'Prepared')
                 ? 'space-between'
                 : 'flex-end',
             gap: 10,
@@ -264,18 +361,29 @@ export function ProductRecordModal({
           }}
         >
           {modalMode === 'edit' &&
-            (editingPublication === 'Published' ||
-              (editingPreparation === 'Complete' && editingAvailableCount > 0)) && (
+            (editingPublication === 'Published' || editingPreparation === 'Prepared') && (
               <Button
                 type="button"
                 variant="secondary"
-                disabled={togglingPublication}
+                disabled={
+                  togglingPublication ||
+                  saving ||
+                  restartingPreparation ||
+                  editingPreparationLoading ||
+                  (editingPublication !== 'Published' && editingPreparation !== 'Prepared')
+                }
                 onClick={onRequestTogglePublication}
               >
                 {editingPublication === 'Published' ? 'Unpublish' : 'Publish'}
               </Button>
             )}
-          <Button type="submit" variant="primary">
+          <Button
+            type="submit"
+            variant="primary"
+            loading={saving}
+            loadingText={modalMode === 'create' ? 'Creating…' : 'Saving…'}
+            disabled={!name.trim() || togglingPublication || restartingPreparation || editingPreparationLoading}
+          >
             <span>{modalMode === 'create' ? 'Create record' : 'Save changes'}</span>
             <ArrowRight size={15} />
           </Button>

@@ -4,7 +4,7 @@ import { ArrowLeft, CheckCircle2, Clock } from 'lucide-react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { Suspense, useCallback, useEffect, useState } from 'react';
-import { EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
+import { BackLink, EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
 import { ordersApi, paymentsApi } from '@/lib/api';
 import { mapCustomerOrders, type CustomerPaymentItem } from '@/lib/customerAccount';
 import { formatGHS } from '@/lib/formatting/currency';
@@ -41,10 +41,10 @@ function PaymentsContent() {
 
   return (
     <main className="acct-shell">
-      <Link href="/account" className="pdp-back">
+      <BackLink href="/account" className="pdp-back">
         <ArrowLeft size={15} />
         <span>Back to account</span>
-      </Link>
+      </BackLink>
 
       <div className="acct-head">
         <div>

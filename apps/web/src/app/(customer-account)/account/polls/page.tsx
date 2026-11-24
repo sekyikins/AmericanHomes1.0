@@ -3,7 +3,7 @@
 import { ArrowLeft, BarChart2, CheckCircle2, Clock } from 'lucide-react';
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
-import { Button, EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
+import { BackLink, Button, EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
 import { governanceApi } from '@/lib/api';
 import { useToast } from '@/providers/toast.provider';
 
@@ -75,10 +75,10 @@ export default function AccountPollsPage() {
 
   return (
     <main className="acct-shell">
-      <Link href="/account" className="pdp-back">
+      <BackLink href="/account" className="pdp-back">
         <ArrowLeft size={15} />
         <span>Back to account</span>
-      </Link>
+      </BackLink>
 
       <div className="acct-head">
         <div>

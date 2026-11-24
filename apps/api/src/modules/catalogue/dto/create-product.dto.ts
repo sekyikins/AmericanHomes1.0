@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Min } from 'class-validator';
 
 export class CreateProductDto {
   @ApiProperty({ description: 'Product display name', example: 'Ashley Leather Recliner Sofa' })
@@ -51,4 +51,10 @@ export class CreateProductDto {
   @IsOptional()
   @IsString()
   shipmentId?: string;
+
+  @ApiPropertyOptional({ description: 'Initial received unit quantity entering preparation', example: 1 })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  initialQuantity?: number;
 }

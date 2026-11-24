@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth } from '@nestjs/swagger';
 import { PERMISSIONS } from '../../common/constants/permissions';
 import { AuthenticatedUser, CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -36,16 +36,20 @@ export class CatalogueController {
   @ApiBearerAuth()
   @UseGuards(AuthGuard, PermissionsGuard)
   @RequirePermission(PERMISSIONS.CATALOGUE.CREATE)
-  createProduct(@Body() dto: CreateProductDto) {
-    return this.catalogue.createProduct(dto);
+  createProduct(@Body() dto: CreateProductDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.catalogue.createProduct(dto, user.id);
   }
 
   @Patch('products/:id')
   @ApiBearerAuth()
   @UseGuards(AuthGuard, PermissionsGuard)
   @RequirePermission(PERMISSIONS.CATALOGUE.UPDATE)
-  updateProduct(@Param('id') id: string, @Body() dto: UpdateProductDto) {
-    return this.catalogue.updateProduct(id, dto);
+  updateProduct(
+    @Param('id') id: string,
+    @Body() dto: UpdateProductDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.catalogue.updateProduct(id, dto, user.id);
   }
 
   @Post('products/:id/variants')
@@ -65,9 +69,34 @@ export class CatalogueController {
   @RequirePermission(PERMISSIONS.CATALOGUE.UPDATE)
   addProductMedia(
     @Param('id') id: string,
-    @Body() dto: { url: string; type?: string },
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: { url?: string; urls?: string[]; type?: string },
   ) {
-    return this.catalogue.addProductMedia(id, dto.url, dto.type);
+    return this.catalogue.addProductMedia(id, dto, user.id);
+  }
+
+  @Patch('products/:id/media')
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission(PERMISSIONS.CATALOGUE.UPDATE)
+  syncProductMedia(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: { urls: string[]; type?: string },
+  ) {
+    return this.catalogue.syncProductMedia(id, dto, user.id);
+  }
+
+  @Delete('products/:id/media/:mediaId')
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission(PERMISSIONS.CATALOGUE.UPDATE)
+  removeProductMedia(
+    @Param('id') id: string,
+    @Param('mediaId') mediaId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.catalogue.removeProductMedia(id, mediaId, user.id);
   }
 
   @Post('products/:id/preparation')
@@ -80,6 +109,18 @@ export class CatalogueController {
     @Body() dto: { step: string; notes?: string },
   ) {
     return this.catalogue.completePreparationStep(id, user.id, dto);
+  }
+
+  @Post('products/:id/preparation/revert')
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission(PERMISSIONS.CATALOGUE.UPDATE)
+  revertPreparation(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: { step?: string; resetAll?: boolean },
+  ) {
+    return this.catalogue.revertPreparation(id, user.id, dto);
   }
 
   @Post('variants/:variantId/price-proposals')

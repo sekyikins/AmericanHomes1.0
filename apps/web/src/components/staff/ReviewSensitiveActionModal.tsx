@@ -1,6 +1,7 @@
 'use client';
 
 import { StaffModal } from '@/components/staff/StaffModal';
+import { Button } from '@/components/ui';
 import { shortRef } from '@/lib/staffUtils';
 import { ArrowRight } from 'lucide-react';
 import { useState } from 'react';
@@ -32,15 +33,17 @@ export function ReviewSensitiveActionModal({
   ) => Promise<void> | void;
 }) {
   const [note, setNote] = useState('');
-  const [submitting, setSubmitting] = useState(false);
+  const [submittingDecision, setSubmittingDecision] = useState<'APPROVED' | 'REJECTED' | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
 
   if (!action) return null;
 
   const handleDecision = async (decision: 'APPROVED' | 'REJECTED') => {
-    if (submitting) return;
+    if (submittingDecision) return;
     setError(null);
-    setSubmitting(true);
+    setSubmittingDecision(decision);
     try {
       await onDecision?.(action, decision, note);
       setNote('');
@@ -48,7 +51,7 @@ export function ReviewSensitiveActionModal({
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to process decision');
     } finally {
-      setSubmitting(false);
+      setSubmittingDecision(null);
     }
   };
 
@@ -137,25 +140,28 @@ export function ReviewSensitiveActionModal({
         )}
 
         <div className="review-actions">
-          <button
+          <Button
             type="button"
-            className="button"
-            disabled={submitting}
+            variant="secondary"
+            loading={submittingDecision === 'REJECTED'}
+            loadingText="Rejecting…"
+            disabled={submittingDecision !== null}
             style={{ background: '#fff' }}
             onClick={() => handleDecision('REJECTED')}
           >
-            {submitting ? 'Processing…' : 'Reject'}
-          </button>
-          <button
+            Reject
+          </Button>
+          <Button
             type="button"
-            className="button primary"
-            disabled={submitting}
-            aria-busy={submitting || undefined}
+            variant="primary"
+            loading={submittingDecision === 'APPROVED'}
+            loadingText="Approving…"
+            disabled={submittingDecision !== null}
             onClick={() => handleDecision('APPROVED')}
           >
-            <span>{submitting ? 'Approving…' : 'Approve action'}</span>
+            <span>Approve action</span>
             <ArrowRight size={15} />
-          </button>
+          </Button>
         </div>
       </StaffModal>
   );

@@ -33,7 +33,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { ConfirmDialog } from '@/components/ui';
 import { StaffAccountModal } from '@/components/staff/StaffAccountModal';
 import { StaffLoginCard } from '@/components/staff/StaffLoginCard';
@@ -149,8 +149,11 @@ export function AdminShell({ children }: { children: ReactNode }) {
   const [unreadCount, setUnreadCount] = useState(0);
   const { section, title } = getPageTitle(pathname);
 
-  useEffect(() => {
-    if (!user || user.role !== 'STAFF') return;
+  const refreshUnreadCount = useCallback(() => {
+    if (!user || user.role !== 'STAFF') {
+      setUnreadCount(0);
+      return;
+    }
     notificationsApi
       .getMy()
       .then((rows) => {
@@ -160,7 +163,17 @@ export function AdminShell({ children }: { children: ReactNode }) {
         }
       })
       .catch(() => {});
-  }, [user, pathname]);
+  }, [user]);
+
+  useEffect(() => {
+    refreshUnreadCount();
+  }, [refreshUnreadCount, pathname]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.addEventListener('ah:notifications-updated', refreshUnreadCount);
+    return () => window.removeEventListener('ah:notifications-updated', refreshUnreadCount);
+  }, [refreshUnreadCount]);
 
   useEffect(() => {
     setMobileNavOpen(false);

@@ -3,7 +3,7 @@
 import { ArrowLeft, Clock, CreditCard, Info, X } from 'lucide-react';
 import Link from 'next/link';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { ConfirmDialog, EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
+import { BackLink, Button, ConfirmDialog, EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
 import { ordersApi, paymentsApi, reservationsApi } from '@/lib/api';
 import {
   mapCustomerReservations,
@@ -109,10 +109,10 @@ export default function ReservationsPage() {
 
   return (
     <main className="acct-shell">
-      <Link href="/account" className="pdp-back">
+      <BackLink href="/account" className="pdp-back">
         <ArrowLeft size={15} />
         <span>Back to account</span>
-      </Link>
+      </BackLink>
 
       <div className="acct-head">
         <div>
@@ -290,13 +290,15 @@ export default function ReservationsPage() {
                   />
                   <span>Debit / Credit Card</span>
                 </label>
-                <button
+                <Button
                   type="submit"
-                  className="button primary login-submit"
-                  disabled={submitting}
+                  variant="primary"
+                  className="login-submit"
+                  loading={submitting}
+                  loadingText="Processing…"
                 >
-                  {submitting ? 'Processing…' : `Pay ${formatGHS(payReservation.pricePesewas)}`}
-                </button>
+                  Pay {formatGHS(payReservation.pricePesewas)}
+                </Button>
               </form>
             </div>
           </div>

@@ -1,13 +1,16 @@
 'use client';
 
-import { ProductRecordModal } from '@/components/staff/products/ProductModals';
+import {
+  ProductRecordModal,
+  type PreparationStatusLabel,
+} from '@/components/staff/products/ProductModals';
 import {
   ActiveFilterChips,
   HierarchicalFilterDropdown,
   SortableHeader,
 } from '@/components/staff/TableControls';
 import { ConfirmDialog, EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
-import { catalogueApi, governanceApi, shipmentsApi } from '@/lib/api';
+import { catalogueApi, shipmentsApi } from '@/lib/api';
 import {
   applyFiltersAndSort,
   cycleSort,
@@ -24,10 +27,10 @@ import {
   Plus,
   Search,
 } from 'lucide-react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 
-type PreparationStatus = 'Complete' | 'In progress';
+type PreparationStatus = PreparationStatusLabel;
 type PublicationStatus = 'Published' | 'Draft';
 
 type ProductRecord = {
@@ -48,6 +51,7 @@ type ProductRecord = {
 
 function StaffProductsContent() {
   const { showToast } = useToast();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const [products, setProducts] = useState<ProductRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -67,19 +71,19 @@ function StaffProductsContent() {
   );
   const [confirmPublicationToggle, setConfirmPublicationToggle] = useState(false);
   const [togglingPublication, setTogglingPublication] = useState(false);
+  const [restartingPreparation, setRestartingPreparation] = useState(false);
+  const [editingPreparationLoading, setEditingPreparationLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const [name, setName] = useState('');
   const [category, setCategory] = useState('Living room');
   const [shipment, setShipment] = useState('');
   const [shipmentOptions, setShipmentOptions] = useState<string[]>([]);
+  const [initialQuantity, setInitialQuantity] = useState('1');
   const [description, setDescription] = useState('');
   const [brand, setBrand] = useState('');
   const [model, setModel] = useState('');
   const [defectDisclosure, setDefectDisclosure] = useState('');
-  const [imageName, setImageName] = useState('');
-  const [imagePreview, setImagePreview] = useState('');
-  const [imageMimetype, setImageMimetype] = useState('');
 
   const loadProducts = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -98,32 +102,59 @@ function StaffProductsContent() {
         images?: string[];
         media?: Array<{ url?: string }>;
         defectDisclosure?: string;
-        onboarding?: {
-          inspected?: boolean;
-          cleaned?: boolean;
-          photographed?: boolean;
-          wrapped?: boolean;
-        };
+        completedStageCount?: number;
+        preparationStatus?: 'NOT_STARTED' | 'IN_PROGRESS' | 'PREPARED';
+        preparationSteps?: Array<{ step?: string; status?: string }>;
         variants?: Array<{
           sku?: string;
+          priceCents?: number;
           stockLots?: Array<{ available?: number }>;
         }>;
       }>;
       const mapped: ProductRecord[] = (Array.isArray(rows) ? rows : []).map((r) => {
-        const availableCount = (r.variants ?? []).reduce(
+        const isPub = Boolean(r.isPublished ?? r.published);
+        const rawAvailableCount = (r.variants ?? []).reduce(
           (sum, v) =>
             sum + (v.stockLots ?? []).reduce((ls, lot) => ls + (lot.available ?? 0), 0),
           0,
         );
-        const ob = r.onboarding;
-        const prepDone = Boolean(ob?.inspected && ob?.cleaned && ob?.photographed && ob?.wrapped);
+        const availableCount = isPub ? rawAvailableCount : 0;
+        const doneSet = new Set(
+          (r.preparationSteps ?? [])
+            .filter((s) => s.status === 'COMPLETED')
+            .map((s) => String(s.step)),
+        );
+        let stageCount = 0;
+        if (doneSet.has('INSPECTION')) stageCount = 1;
+        if (stageCount === 1 && doneSet.has('CLEANING')) stageCount = 2;
+        if (stageCount === 2 && doneSet.has('PHOTOGRAPHY')) stageCount = 3;
+        if (stageCount === 3 && doneSet.has('WRAPPING')) stageCount = 4;
+        const hasPrice = (r.variants ?? []).some((v) => (v.priceCents ?? 0) > 0);
+        if (stageCount === 4 && (doneSet.has('PRICING') || hasPrice)) stageCount = 5;
+        if (
+          stageCount === 5 &&
+          (doneSet.has('FINAL_REVIEW') || Boolean(r.isPublished ?? r.published))
+        ) {
+          stageCount = 6;
+        }
+        const effectiveStageCount =
+          typeof r.completedStageCount === 'number' ? r.completedStageCount : stageCount;
+
+        let preparation: PreparationStatus = 'Not Started';
+        if (effectiveStageCount >= 6) {
+          preparation = 'Prepared';
+        } else if (effectiveStageCount > 0 || doneSet.size > 0 || hasPrice) {
+          preparation = 'In Progress';
+        } else {
+          preparation = 'Not Started';
+        }
         return {
           id: r.id,
           identifier: r.variants?.[0]?.sku || r.sku || r.id.slice(-6).toUpperCase(),
           name: r.name,
           category: r.category || 'Uncategorized',
           shipment: 'Warehouse',
-          preparation: prepDone ? 'Complete' : 'In progress',
+          preparation,
           availableCount,
           publication: (r.isPublished ?? r.published) ? 'Published' : 'Draft',
           image:
@@ -185,7 +216,7 @@ function StaffProductsContent() {
       {
         key: 'preparation',
         type: 'status',
-        statusOrder: ['In progress', 'Complete'],
+        statusOrder: ['Not Started', 'In Progress', 'Prepared'],
         accessor: (p) => p.preparation,
       },
       { key: 'availableCount', type: 'number', accessor: (p) => p.availableCount },
@@ -222,13 +253,12 @@ function StaffProductsContent() {
     setEditingProduct(null);
     setName('');
     setCategory('Living room');
-    setShipment('AH-SHP-2026-001');
+    setShipment(shipmentOptions[0] || 'AH-SHP-2026-001');
+    setInitialQuantity('1');
     setDescription('');
     setBrand('');
     setModel('');
     setDefectDisclosure('');
-    setImageName('');
-    setImagePreview('');
   };
 
   const openEdit = (p: ProductRecord) => {
@@ -241,8 +271,44 @@ function StaffProductsContent() {
     setBrand(p.brand);
     setModel(p.model);
     setDefectDisclosure(p.defectDisclosure ?? '');
-    setImageName('');
-    setImagePreview(p.image);
+  };
+
+  const handleOpenPreparation = () => {
+    if (!editingProduct) return;
+    setModalMode(null);
+    router.push(`/staff/preparation?productId=${encodeURIComponent(editingProduct.id)}`);
+  };
+
+  const handleEditPreparation = async () => {
+    if (!editingProduct || editingPreparationLoading) return;
+    setEditingPreparationLoading(true);
+    try {
+      await catalogueApi.revertPreparation(editingProduct.id, { step: 'FINAL_REVIEW' });
+      showToast('Preparation reopened for editing', 'success');
+      setModalMode(null);
+      router.push(`/staff/preparation?productId=${encodeURIComponent(editingProduct.id)}`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to reopen preparation', 'error');
+    } finally {
+      setEditingPreparationLoading(false);
+    }
+  };
+
+  const handleRestartPreparation = async () => {
+    if (!editingProduct || restartingPreparation) return;
+    setRestartingPreparation(true);
+    try {
+      await catalogueApi.revertPreparation(editingProduct.id, { resetAll: true });
+      showToast('Preparation restarted — product returned to Preparation queue', 'success');
+      await loadProducts(true);
+      setEditingProduct((prev) =>
+        prev ? { ...prev, preparation: 'Not Started', publication: 'Draft', availableCount: 0 } : null,
+      );
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to restart preparation', 'error');
+    } finally {
+      setRestartingPreparation(false);
+    }
   };
 
   const handleTogglePublication = async () => {
@@ -256,17 +322,14 @@ function StaffProductsContent() {
       } else {
         await catalogueApi.unpublishProduct(editingProduct.id);
       }
-      setProducts((prev) =>
-        prev.map((p) =>
-          p.id === editingProduct.id ? { ...p, publication: nextPub } : p,
-        ),
-      );
+      await loadProducts(true);
       setConfirmPublicationToggle(false);
       setModalMode(null);
       showToast(
         nextPub === 'Published'
-          ? `${editingProduct.name} republished to storefront`
-          : `${editingProduct.name} unpublished (kept as draft)`,
+          ? `${editingProduct.name} republished to storefront and marked saleable`
+          : `${editingProduct.name} unpublished (stock withheld from storefront sale)`,
+        'success',
       );
     } catch (err) {
       showToast(
@@ -285,24 +348,14 @@ function StaffProductsContent() {
     setSaving(true);
     try {
       if (modalMode === 'create') {
-        const created = (await catalogueApi.createProduct({
+        await catalogueApi.createProduct({
           name: name.trim(),
           category: category.toLowerCase().replace(/\s+/g, '-'),
           description: description.trim() || undefined,
           brand: brand.trim() || undefined,
           model: model.trim() || undefined,
-        })) as { id?: string };
-        if (created?.id && imagePreview.startsWith('data:')) {
-          const uploaded = await governanceApi.uploadFile({
-            folder: 'products',
-            filename: imageName || 'product.jpg',
-            mimetype: imageMimetype || 'image/jpeg',
-            base64: imagePreview,
-          });
-          if (uploaded.publicUrl) {
-            await catalogueApi.addProductMedia(created.id, uploaded.publicUrl);
-          }
-        }
+          initialQuantity: Math.max(1, Number(initialQuantity) || 1),
+        });
         setModalMode(null);
         showToast('New product draft created', 'success');
         await loadProducts(true);
@@ -315,17 +368,6 @@ function StaffProductsContent() {
           model: model.trim() || undefined,
           defectDisclosure: defectDisclosure.trim() || undefined,
         });
-        if (imagePreview.startsWith('data:')) {
-          const uploaded = await governanceApi.uploadFile({
-            folder: 'products',
-            filename: imageName || 'product.jpg',
-            mimetype: imageMimetype || 'image/jpeg',
-            base64: imagePreview,
-          });
-          if (uploaded.publicUrl) {
-            await catalogueApi.addProductMedia(editingProduct.id, uploaded.publicUrl);
-          }
-        }
         setModalMode(null);
         showToast('Product record updated', 'success');
         await loadProducts(true);
@@ -480,7 +522,11 @@ function StaffProductsContent() {
               <div>
                 <span
                   className={`acct-pill ${
-                    p.preparation === 'Complete' ? 'green' : 'amber'
+                    p.preparation === 'Prepared'
+                      ? 'green'
+                      : p.preparation === 'In Progress'
+                      ? 'amber'
+                      : 'gray'
                   }`}
                 >
                   ● {p.preparation}
@@ -512,26 +558,27 @@ function StaffProductsContent() {
         category={category}
         shipment={shipment}
         shipmentOptions={shipmentOptions}
+        initialQuantity={initialQuantity}
         description={description}
         brand={brand}
         model={model}
         defectDisclosure={defectDisclosure}
-        imageName={imageName}
-        imagePreview={imagePreview}
+        saving={saving}
         togglingPublication={togglingPublication}
+        restartingPreparation={restartingPreparation}
+        editingPreparationLoading={editingPreparationLoading}
         onNameChange={setName}
         onCategoryChange={setCategory}
         onShipmentChange={setShipment}
+        onInitialQuantityChange={setInitialQuantity}
         onDescriptionChange={setDescription}
         onBrandChange={setBrand}
         onModelChange={setModel}
         onDefectDisclosureChange={setDefectDisclosure}
-        onImageChange={(nextName, nextPreview, nextMime) => {
-          setImageName(nextName);
-          setImagePreview(nextPreview);
-          setImageMimetype(nextMime ?? '');
-        }}
         onRequestTogglePublication={() => setConfirmPublicationToggle(true)}
+        onOpenPreparation={handleOpenPreparation}
+        onEditPreparation={handleEditPreparation}
+        onRestartPreparation={handleRestartPreparation}
         onSubmit={handleSubmit}
         onClose={() => setModalMode(null)}
       />

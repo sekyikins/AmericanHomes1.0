@@ -86,8 +86,16 @@ export const catalogueApi = {
     api.post<unknown>(`/catalogue/products/${productId}/variants`, dto),
   addProductMedia: (productId: string, url: string, type = 'IMAGE') =>
     api.post<unknown>(`/catalogue/products/${productId}/media`, { url, type }),
+  addProductMediaBatch: (productId: string, urls: string[], type = 'IMAGE') =>
+    api.post<unknown>(`/catalogue/products/${productId}/media`, { urls, type }),
+  syncProductMedia: (productId: string, urls: string[], type = 'IMAGE') =>
+    api.patch<unknown>(`/catalogue/products/${productId}/media`, { urls, type }),
+  removeProductMedia: (productId: string, mediaId: string) =>
+    api.del<unknown>(`/catalogue/products/${productId}/media/${mediaId}`),
   completePreparation: (productId: string, step: string, notes?: string) =>
     api.post<unknown>(`/catalogue/products/${productId}/preparation`, { step, notes }),
+  revertPreparation: (productId: string, dto: { step?: string; resetAll?: boolean }) =>
+    api.post<unknown>(`/catalogue/products/${productId}/preparation/revert`, dto),
   proposePrice: (variantId: string, dto: Record<string, unknown>) =>
     api.post<unknown>(`/catalogue/variants/${variantId}/price-proposals`, dto),
   approvePrice: (approvalId: string) =>
@@ -136,6 +144,8 @@ export const inventoryApi = {
         variantName: string;
         productId: string;
         productName: string;
+        isPublished?: boolean;
+        disposition?: string;
         image: string;
         condition: string;
         physical: number;

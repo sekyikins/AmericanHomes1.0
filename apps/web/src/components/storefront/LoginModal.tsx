@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowRight, Home, X } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, type FormEvent } from 'react';
+import { Button } from '@/components/ui';
 import { authApi, notificationsApi } from '@/lib/api';
 import { useToast } from '@/providers/toast.provider';
 import { useAuth } from '@/store/auth.store';
@@ -325,21 +326,19 @@ export function LoginCard({
                 </div>
               )}
 
-              <button
+              <Button
                 type="submit"
-                className="button primary login-submit"
-                disabled={submitting}
-                aria-busy={submitting || undefined}
+                variant="primary"
+                className="login-submit"
+                loading={submitting}
+                loadingText="Sending code…"
+                disabled={!phone.trim() || (authMode === 'signup' && !fullName.trim())}
               >
                 <span>
-                  {submitting
-                    ? 'Sending code…'
-                    : authMode === 'signup'
-                      ? 'Continue & send code'
-                      : 'Send verification code'}
+                  {authMode === 'signup' ? 'Continue & send code' : 'Send verification code'}
                 </span>
                 <ArrowRight size={16} strokeWidth={2.2} />
-              </button>
+              </Button>
             </form>
 
             <div
@@ -463,15 +462,17 @@ export function LoginCard({
                 </div>
               )}
 
-              <button
+              <Button
                 type="submit"
-                className="button primary login-submit"
-                disabled={submitting}
-                aria-busy={submitting || undefined}
+                variant="primary"
+                className="login-submit"
+                loading={submitting}
+                loadingText="Verifying…"
+                disabled={otp.trim().length < 6}
               >
-                <span>{submitting ? 'Verifying…' : 'Verify & sign in'}</span>
+                <span>Verify &amp; sign in</span>
                 <ArrowRight size={16} strokeWidth={2.2} />
-              </button>
+              </Button>
 
               <button
                 type="button"

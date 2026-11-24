@@ -223,8 +223,14 @@ export function RecordCollectionModal({
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-          <Button type="submit" variant="primary" loading={submitting} disabled={!selectedOrderId}>
-            <span>{submitting ? 'Recording…' : 'Confirm handover'}</span>
+          <Button
+            type="submit"
+            variant="primary"
+            loading={submitting}
+            loadingText="Recording…"
+            disabled={!selectedOrderId}
+          >
+            <span>Confirm handover</span>
             <ArrowRight size={15} />
           </Button>
         </div>

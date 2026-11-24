@@ -3,7 +3,7 @@
 import { ArrowLeft, Warehouse } from 'lucide-react';
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
-import { EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
+import { BackLink, EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
 import { ordersApi } from '@/lib/api';
 import { mapCustomerOrders, type CustomerCollectionItem } from '@/lib/customerAccount';
 
@@ -47,10 +47,10 @@ export default function CollectionsPage() {
 
   return (
     <main className="acct-shell">
-      <Link href="/account" className="pdp-back">
+      <BackLink href="/account" className="pdp-back">
         <ArrowLeft size={15} />
         <span>Back to account</span>
-      </Link>
+      </BackLink>
 
       <div className="acct-head">
         <div>

@@ -2,6 +2,7 @@
 
 import { X } from 'lucide-react';
 import type { FormEvent } from 'react';
+import { Button } from '@/components/ui';
 import type { CustomerOrderRecord } from '@/lib/customerAccount';
 import { formatGHS } from '@/lib/formatting/currency';
 
@@ -228,9 +229,16 @@ export function OrderReturnModal({
                     marginBottom: 18,
                   }}
                 />
-                <button type="submit" className="button primary login-submit" disabled={submitting}>
-                  {submitting ? 'Submitting…' : 'Submit return request'}
-                </button>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  className="login-submit"
+                  loading={submitting}
+                  loadingText="Submitting…"
+                  disabled={!reason.trim()}
+                >
+                  Submit return request
+                </Button>
               </form>
             </>
           )}
@@ -300,11 +308,15 @@ export function OrderPayBalanceModal({
               />
               <span>Debit / Credit Card</span>
             </label>
-            <button type="submit" className="button primary login-submit" disabled={submitting}>
-              {submitting
-                ? 'Initializing…'
-                : `Pay ${formatGHS(Math.max(0, order.totalPesewas - order.paidPesewas))}`}
-            </button>
+            <Button
+              type="submit"
+              variant="primary"
+              className="login-submit"
+              loading={submitting}
+              loadingText="Initializing…"
+            >
+              Pay {formatGHS(Math.max(0, order.totalPesewas - order.paidPesewas))}
+            </Button>
           </form>
         </div>
       </div>

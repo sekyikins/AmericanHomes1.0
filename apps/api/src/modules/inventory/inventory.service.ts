@@ -11,7 +11,12 @@ export class InventoryService {
     const [variants, adjustments] = await Promise.all([
       this.prisma.productVariant.findMany({
         include: {
-          product: { include: { media: { orderBy: { position: 'asc' }, take: 1 } } },
+          product: {
+            include: {
+              media: { orderBy: { position: 'asc' }, take: 1 },
+              preparationSteps: true,
+            },
+          },
           stockLots: true,
         },
         orderBy: { createdAt: 'desc' },
@@ -22,7 +27,46 @@ export class InventoryService {
       }),
     ]);
 
-    const items = variants.map((v) => {
+    const preparedVariants = [];
+    for (const v of variants) {
+      if (!v.product) continue;
+      const doneSteps = new Set(
+        (v.product.preparationSteps ?? [])
+          .filter((s) => s.status === 'COMPLETED')
+          .map((s) => s.step),
+      );
+      const allPhysicalDone = ['INSPECTION', 'CLEANING', 'PHOTOGRAPHY', 'WRAPPING'].every((s) =>
+        doneSteps.has(s),
+      );
+      const hasPrice = doneSteps.has('PRICING') || v.priceCents > 0;
+      const isFullyPrepared =
+        Boolean(v.product.isPublished) ||
+        (allPhysicalDone && hasPrice && doneSteps.has('FINAL_REVIEW'));
+
+      if (!isFullyPrepared || !v.product.isPublished) {
+        // Unprepared (< 6 stages) or unpublished products have their unheld stock in unavailable
+        for (const lot of v.stockLots) {
+          if (lot.available > 0) {
+            const moved = lot.available;
+            await this.prisma.stockLot.update({
+              where: { id: lot.id },
+              data: {
+                available: 0,
+                unavailable: { increment: moved },
+              },
+            });
+            lot.unavailable += moved;
+            lot.available = 0;
+          }
+        }
+      }
+      if (!isFullyPrepared) {
+        continue;
+      }
+      preparedVariants.push(v);
+    }
+
+    const items = preparedVariants.map((v) => {
       const physical = v.stockLots.reduce((s, l) => s + l.quantity, 0);
       const available = v.stockLots.reduce((s, l) => s + l.available, 0);
       const held = v.stockLots.reduce((s, l) => s + l.held, 0);
@@ -33,6 +77,8 @@ export class InventoryService {
         variantName: v.name ?? v.sku,
         productId: v.productId,
         productName: v.product?.name ?? 'Product',
+        isPublished: Boolean(v.product?.isPublished),
+        disposition: v.product?.disposition ?? 'NORMAL_SALE',
         image: v.product?.media?.[0]?.url ?? '/images/sofa.avif',
         condition: v.stockLots[0]?.condition ?? 'GOOD',
         physical,
@@ -163,6 +209,22 @@ export class InventoryService {
       throw new ConflictException('Stock commitment quantity must be at least 1');
     }
     const run = async (tx: Parameters<Parameters<PrismaService['$transaction']>[0]>[0]) => {
+      const variantRecord = await tx.productVariant.findUnique({
+        where: { id: dto.variantId },
+        include: { product: true },
+      });
+      if (!variantRecord || !variantRecord.product) {
+        throw new NotFoundException(`Variant ${dto.variantId} not found`);
+      }
+      if (
+        !variantRecord.product.isPublished ||
+        !['NORMAL_SALE', 'DISCOUNTED_SALE'].includes(variantRecord.product.disposition)
+      ) {
+        throw new ConflictException(
+          `Product "${variantRecord.product.name}" is not published and cannot be sold or reserved`,
+        );
+      }
+
       const lots = await tx.$queryRaw<
         Array<{ id: string; available: number }>
       >`SELECT id, available FROM "StockLot" WHERE "variantId" = ${dto.variantId} AND available > 0 ORDER BY "createdAt" ASC FOR UPDATE`;

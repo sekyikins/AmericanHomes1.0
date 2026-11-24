@@ -70,23 +70,32 @@ export default function StaffReservationsPage() {
   const [newNotes, setNewNotes] = useState('');
 
   const loadVariants = useCallback(async () => {
-    if (variants.length > 0) return;
-    const prodList = await catalogueApi.listAdmin().catch(() => catalogueApi.listPublished().catch(() => []));
+    const prodList = await catalogueApi.listPublished().catch(() => []);
     const opts: VariantOpt[] = [];
     for (const p of (Array.isArray(prodList) ? prodList : []) as Array<{
       name: string;
-      variants?: Array<{ id: string; sku?: string; name?: string }>;
+      isPublished?: boolean;
+      published?: boolean;
+      variants?: Array<{
+        id: string;
+        sku?: string;
+        name?: string;
+        stockLots?: Array<{ available?: number }>;
+      }>;
     }>) {
+      if (p.isPublished === false || p.published === false) continue;
       for (const v of p.variants ?? []) {
+        const available = (v.stockLots ?? []).reduce((s, l) => s + (l.available ?? 0), 0);
+        if (available <= 0) continue;
         opts.push({
           id: v.id,
-          label: `${p.name}${v.sku ? ` (${v.sku})` : ''}`,
+          label: `${p.name}${v.sku ? ` (${v.sku})` : ''} · ${available} saleable`,
         });
       }
     }
     setVariants(opts);
     if (opts[0]) setNewVariantId((prev) => prev || opts[0].id);
-  }, [variants.length]);
+  }, []);
 
   const loadData = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);

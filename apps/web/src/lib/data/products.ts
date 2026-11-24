@@ -17,6 +17,7 @@ export type CatalogProduct = {
   availableCount: number;
   badge?: string;
   image: string;
+  images?: string[];
   rating: string;
   reviewCount: number;
   description: string;
@@ -169,6 +170,9 @@ export function mapApiProductToCatalog(raw: Record<string, unknown>): CatalogPro
     0,
   );
   const media = Array.isArray(raw.media) ? (raw.media as Array<{ url?: string }>) : [];
+  const mediaUrls = media
+    .map((m) => (m?.url ? String(m.url) : ''))
+    .filter((u) => Boolean(u));
   const pricePesewas = Number(firstVariant?.priceCents ?? 0);
 
   return {
@@ -179,7 +183,8 @@ export function mapApiProductToCatalog(raw: Record<string, unknown>): CatalogPro
     category: String(raw.category || 'Living room'),
     pricePesewas,
     availableCount,
-    image: media[0]?.url || '/images/sofa.avif',
+    image: mediaUrls[0] || '/images/sofa.avif',
+    images: mediaUrls.length > 0 ? mediaUrls : ['/images/sofa.avif'],
     rating: '4.9',
     reviewCount: 12,
     description: String(

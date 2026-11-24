@@ -2,6 +2,7 @@
 
 import { Info, X } from 'lucide-react';
 import { demandTone, type DemandItem, type DemandMode } from '@/components/staff/demand/demandConfig';
+import { Button } from '@/components/ui';
 
 type DemandDetailDrawerProps = {
   selected: DemandItem;
@@ -156,37 +157,30 @@ export function DemandDetailDrawer({
         (mode === 'allocations' && selected.status === 'Under review') ? (
           <div style={{ display: 'flex', gap: 10 }}>
             {mode !== 'sourcing' && (
-              <button
+              <Button
                 type="button"
-                className="button"
+                variant="secondary"
                 disabled={submitting}
-                aria-busy={submitting || undefined}
                 style={{ flex: 1, background: '#fff' }}
                 onClick={onDefer}
               >
-                {submitting
-                  ? 'Saving…'
-                  : mode === 'allocations'
-                    ? 'Decline offer'
-                    : 'Defer'}
-              </button>
+                {mode === 'allocations' ? 'Decline offer' : 'Defer'}
+              </Button>
             )}
-            <button
+            <Button
               type="button"
-              className="button primary"
-              disabled={submitting}
-              aria-busy={submitting || undefined}
+              variant="primary"
+              loading={submitting}
+              loadingText="Saving…"
               style={{ flex: 1.5 }}
               onClick={onPrimaryDecision}
             >
-              {submitting
-                ? 'Saving…'
-                : mode === 'sourcing'
-                  ? 'Confirm with provider'
-                  : mode === 'allocations'
-                    ? 'Mark offer accepted'
-                    : 'Approve for sourcing'}
-            </button>
+              {mode === 'sourcing'
+                ? 'Confirm with provider'
+                : mode === 'allocations'
+                  ? 'Mark offer accepted'
+                  : 'Approve for sourcing'}
+            </Button>
           </div>
         ) : (
           <div

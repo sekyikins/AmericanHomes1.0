@@ -44,7 +44,7 @@ type InventoryRow = {
   held: number;
   unavailable: number;
   condition: string;
-  status: 'Saleable' | 'Hold';
+  status: 'Saleable' | 'Unpublished' | 'Hold';
   image: string;
 };
 
@@ -75,6 +75,7 @@ export function StockWorkspace({ mode }: { mode: 'inventory' | 'stocktakes' }) {
   const [search, setSearch] = useState('');
   const [filters, setFilters] = useState<FilterValueMap>({});
   const [sort, setSort] = useState<SortState>(null);
+  const [activeTab, setActiveTab] = useState<'inventory' | 'approvals'>('inventory');
   const [modalOpen, setModalOpen] = useState<'adjustment' | 'stocktake' | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -112,7 +113,12 @@ export function StockWorkspace({ mode }: { mode: 'inventory' | 'stocktakes' }) {
         held: item.held,
         unavailable: item.unavailable,
         condition: item.condition,
-        status: item.available > 0 ? 'Saleable' : 'Hold',
+        status:
+          item.isPublished === false
+            ? 'Unpublished'
+            : item.available > 0
+              ? 'Saleable'
+              : 'Hold',
         image: item.image,
       }));
       setRows(mappedRows);
@@ -189,7 +195,7 @@ export function StockWorkspace({ mode }: { mode: 'inventory' | 'stocktakes' }) {
       {
         key: 'status',
         type: 'status',
-        statusOrder: ['Saleable', 'Hold'],
+        statusOrder: ['Saleable', 'Hold', 'Unpublished'],
         accessor: (r) => r.status,
       },
     ],
@@ -224,6 +230,16 @@ export function StockWorkspace({ mode }: { mode: 'inventory' | 'stocktakes' }) {
   );
 
   const selectedAdjRow = rows.find((r) => r.id === adjVariantId) ?? rows[0];
+  const pendingApprovalsCount = adjustments.filter((a) => a.status === 'PENDING').length;
+  const sortedAdjustments = useMemo(
+    () =>
+      [...adjustments].sort((a, b) => {
+        if (a.status === 'PENDING' && b.status !== 'PENDING') return -1;
+        if (a.status !== 'PENDING' && b.status === 'PENDING') return 1;
+        return 0;
+      }),
+    [adjustments],
+  );
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -240,6 +256,7 @@ export function StockWorkspace({ mode }: { mode: 'inventory' | 'stocktakes' }) {
           reason: adjNotes.trim() ? `${adjReason}: ${adjNotes.trim()}` : adjReason,
         });
         showToast('Stock adjustment submitted for manager approval', 'success');
+        setActiveTab('approvals');
       } else {
         if (!stkRef.trim()) return;
         await stocktakesApi.create({ reference: stkRef.trim() });
@@ -340,201 +357,262 @@ export function StockWorkspace({ mode }: { mode: 'inventory' | 'stocktakes' }) {
         </div>
       </section>
 
-      <div className="staff-toolbar">
-        <label className="staff-search-box">
-          <Search size={16} color="var(--muted)" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search product, variant or identifier…"
-            aria-label="Search product, variant or identifier"
-          />
-        </label>
-        <HierarchicalFilterDropdown
-          categories={filterCategories}
-          selected={filters}
-          onChange={setFilters}
-        />
+      <div className="ship-tabs-bar" role="tablist" aria-label="Inventory views" style={{ marginTop: 14, marginBottom: 14 }}>
         <button
           type="button"
-          className="button"
-          style={{ background: '#fff' }}
-          onClick={() =>
-            downloadCsv(
-              `${mode}.csv`,
-              ['Product', 'Variant', 'Identifier', 'Lot', 'Physical', 'Available', 'Held', 'Unavailable', 'Condition', 'Status'],
-              visible.map((r) => [
-                r.product,
-                r.variant,
-                r.identifier,
-                r.lot,
-                r.physical,
-                r.available,
-                r.held,
-                r.unavailable,
-                r.condition,
-                r.status,
-              ]),
-            )
-          }
+          role="tab"
+          aria-selected={activeTab === 'inventory'}
+          className={`ship-tab-btn${activeTab === 'inventory' ? ' active' : ''}`}
+          onClick={() => setActiveTab('inventory')}
         >
-          <Download size={14} />
-          <span>Export</span>
+          <span>Inventory ledger ({rows.length})</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'approvals'}
+          className={`ship-tab-btn${activeTab === 'approvals' ? ' active' : ''}`}
+          onClick={() => setActiveTab('approvals')}
+        >
+          <span>Pending stock approvals</span>
+          {pendingApprovalsCount > 0 ? (
+            <span className="ship-tab-count">{pendingApprovalsCount}</span>
+          ) : (
+            <span style={{ color: 'var(--muted)', fontWeight: 600 }}>({adjustments.length})</span>
+          )}
         </button>
       </div>
 
-      <ActiveFilterChips
-        categories={filterCategories}
-        selected={filters}
-        onChange={setFilters}
-      />
-
-      <section className="acct-panel" style={{ padding: 0 }}>
-        <div className="staff-table-head staff-inv-cols">
-          <SortableHeader label="PRODUCT" sortKey="product" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
-          <SortableHeader label="IDENTIFIER / LOT" sortKey="identifier" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
-          <SortableHeader label="PHYSICAL" sortKey="physical" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
-          <SortableHeader label="AVAILABLE" sortKey="available" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
-          <SortableHeader label="HELD" sortKey="held" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
-          <SortableHeader label="UNAVAILABLE" sortKey="unavailable" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
-          <SortableHeader label="CONDITION" sortKey="condition" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
-          <SortableHeader label="STATUS" sortKey="status" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
-        </div>
-
-        {loading ? (
-          <div style={{ padding: 16 }}>
-            <TableSkeleton rows={5} />
-          </div>
-        ) : loadError ? (
-          <ErrorState message={loadError} onRetry={loadData} />
-        ) : visible.length === 0 ? (
-          <EmptyState
-            title="No inventory items found"
-            description="No product variants match your current search or filters."
-            action={
-              search || hasActiveFilters ? (
-                <button
-                  type="button"
-                  className="button"
-                  onClick={() => {
-                    setSearch('');
-                    setFilters({});
-                  }}
-                >
-                  Clear filters
-                </button>
-              ) : undefined
-            }
-          />
-        ) : (
-          visible.map((row) => (
-            <button
-              key={row.id}
-              type="button"
-              className="staff-table-row staff-inv-cols"
-              onClick={() => openLedger(row)}
-            >
-              <div className="prod-cell-media">
-                <img
-                  src={row.image}
-                  alt={row.product}
-                  className="prod-cell-thumb"
-                />
-                <div>
-                  <strong>{row.product}</strong>
-                  <small>{row.variant}</small>
-                </div>
-              </div>
-              <div>
-                <strong>{row.identifier}</strong>
-                <small>{row.lot}</small>
-              </div>
-              <span className="staff-cell-text">{row.physical}</span>
-              <span className="staff-cell-text">{row.available}</span>
-              <span className="staff-cell-text">{row.held}</span>
-              <span className="staff-cell-text">{row.unavailable}</span>
-              <span className="staff-cell-text">{row.condition}</span>
-              <div>
-                <span className={`acct-pill ${row.status === 'Saleable' ? 'green' : 'amber'}`}>
-                  ● {row.status}
+      {activeTab === 'inventory' ? (
+        <>
+          {pendingApprovalsCount > 0 && (
+            <div className="dash-alert-bar" style={{ marginBottom: 14 }}>
+              <div className="dash-alert-left">
+                <AlertTriangle size={16} color="#b45309" />
+                <span>
+                  <strong>
+                    {pendingApprovalsCount} pending stock{' '}
+                    {pendingApprovalsCount === 1 ? 'approval awaits' : 'approvals await'} review
+                  </strong>{' '}
+                  · Official inventory balances update once approved.
                 </span>
               </div>
-            </button>
-          ))
-        )}
-      </section>
-
-      <section className="ship-card" style={{ marginTop: 14 }}>
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginBottom: 10,
-          }}
-        >
-          <div>
-            <h2 style={{ fontSize: 16, margin: 0 }}>Pending stock approvals</h2>
-            <p className="ship-card-sub">
-              Official balances change only after approval by another authorised
-              manager.
-            </p>
-          </div>
-        </div>
-
-        {adjustments.length === 0 ? (
-          <p style={{ color: 'var(--muted)', fontSize: 13, margin: '10px 0 4px' }}>
-            No stock adjustment proposals recorded yet.
-          </p>
-        ) : (
-          adjustments.map((ap) => (
-            <div
-              key={ap.id}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: 12,
-                padding: '12px 0',
-                borderTop: '0.8px solid var(--line)',
-                flexWrap: 'wrap',
-              }}
-            >
-              <div>
-                <strong style={{ display: 'block', fontSize: 13, color: 'var(--ink)' }}>
-                  {ap.reference} · {ap.item} ({ap.delta})
-                </strong>
-                <small style={{ fontSize: 11.5, color: 'var(--muted)' }}>
-                  {ap.reason}
-                </small>
-              </div>
-              {ap.status === 'PENDING' ? (
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button
-                    type="button"
-                    className="button"
-                    style={{ background: '#fff' }}
-                    onClick={() => setPendingDecision({ adj: ap, decision: 'REJECTED' })}
-                  >
-                    Reject
-                  </button>
-                  <button
-                    type="button"
-                    className="button primary"
-                    onClick={() => setPendingDecision({ adj: ap, decision: 'APPROVED' })}
-                  >
-                    Approve
-                  </button>
-                </div>
-              ) : (
-                <span className={`acct-pill ${ap.status === 'APPROVED' ? 'green' : 'gray'}`}>
-                  ● {ap.status}
-                </span>
-              )}
+              <button
+                type="button"
+                className="link"
+                style={{ border: 0, background: 'transparent', padding: 0, color: '#92400e' }}
+                onClick={() => setActiveTab('approvals')}
+              >
+                <span>View approvals</span>
+              </button>
             </div>
-          ))
-        )}
-      </section>
+          )}
+
+          <div className="staff-toolbar">
+            <label className="staff-search-box">
+              <Search size={16} color="var(--muted)" />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search product, variant or identifier…"
+                aria-label="Search product, variant or identifier"
+              />
+            </label>
+            <HierarchicalFilterDropdown
+              categories={filterCategories}
+              selected={filters}
+              onChange={setFilters}
+            />
+            <button
+              type="button"
+              className="button"
+              style={{ background: '#fff' }}
+              onClick={() =>
+                downloadCsv(
+                  `${mode}.csv`,
+                  ['Product', 'Variant', 'Identifier', 'Lot', 'Physical', 'Available', 'Held', 'Unavailable', 'Condition', 'Status'],
+                  visible.map((r) => [
+                    r.product,
+                    r.variant,
+                    r.identifier,
+                    r.lot,
+                    r.physical,
+                    r.available,
+                    r.held,
+                    r.unavailable,
+                    r.condition,
+                    r.status,
+                  ]),
+                )
+              }
+            >
+              <Download size={14} />
+              <span>Export</span>
+            </button>
+          </div>
+
+          <ActiveFilterChips
+            categories={filterCategories}
+            selected={filters}
+            onChange={setFilters}
+          />
+
+          <section className="acct-panel" style={{ padding: 0 }}>
+            <div className="staff-table-head staff-inv-cols">
+              <SortableHeader label="PRODUCT" sortKey="product" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+              <SortableHeader label="IDENTIFIER / LOT" sortKey="identifier" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+              <SortableHeader label="PHYSICAL" sortKey="physical" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+              <SortableHeader label="AVAILABLE" sortKey="available" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+              <SortableHeader label="HELD" sortKey="held" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+              <SortableHeader label="UNAVAILABLE" sortKey="unavailable" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+              <SortableHeader label="CONDITION" sortKey="condition" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+              <SortableHeader label="STATUS" sortKey="status" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
+            </div>
+
+            {loading ? (
+              <div style={{ padding: 16 }}>
+                <TableSkeleton rows={5} />
+              </div>
+            ) : loadError ? (
+              <ErrorState message={loadError} onRetry={loadData} />
+            ) : visible.length === 0 ? (
+              <EmptyState
+                title="No inventory items found"
+                description="No product variants match your current search or filters."
+                action={
+                  search || hasActiveFilters ? (
+                    <button
+                      type="button"
+                      className="button"
+                      onClick={() => {
+                        setSearch('');
+                        setFilters({});
+                      }}
+                    >
+                      Clear filters
+                    </button>
+                  ) : undefined
+                }
+              />
+            ) : (
+              visible.map((row) => (
+                <button
+                  key={row.id}
+                  type="button"
+                  className="staff-table-row staff-inv-cols"
+                  onClick={() => openLedger(row)}
+                >
+                  <div className="prod-cell-media">
+                    <img
+                      src={row.image}
+                      alt={row.product}
+                      className="prod-cell-thumb"
+                    />
+                    <div>
+                      <strong>{row.product}</strong>
+                      <small>{row.variant}</small>
+                    </div>
+                  </div>
+                  <div>
+                    <strong>{row.identifier}</strong>
+                    <small>{row.lot}</small>
+                  </div>
+                  <span className="staff-cell-text">{row.physical}</span>
+                  <span className="staff-cell-text">{row.available}</span>
+                  <span className="staff-cell-text">{row.held}</span>
+                  <span className="staff-cell-text">{row.unavailable}</span>
+                  <span className="staff-cell-text">{row.condition}</span>
+                  <div>
+                    <span
+                      className={`acct-pill ${
+                        row.status === 'Saleable'
+                          ? 'green'
+                          : row.status === 'Hold'
+                            ? 'amber'
+                            : 'gray'
+                      }`}
+                    >
+                      ● {row.status}
+                    </span>
+                  </div>
+                </button>
+              ))
+            )}
+          </section>
+        </>
+      ) : (
+        <section className="ship-card">
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: 10,
+            }}
+          >
+            <div>
+              <h2 style={{ fontSize: 16, margin: 0 }}>Pending stock approvals</h2>
+              <p className="ship-card-sub">
+                Official balances change only after approval by another authorised
+                manager.
+              </p>
+            </div>
+          </div>
+
+          {sortedAdjustments.length === 0 ? (
+            <p style={{ color: 'var(--muted)', fontSize: 13, margin: '10px 0 4px' }}>
+              No stock adjustment proposals recorded yet.
+            </p>
+          ) : (
+            sortedAdjustments.map((ap) => (
+              <div
+                key={ap.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 12,
+                  padding: '12px 0',
+                  borderTop: '0.8px solid var(--line)',
+                  flexWrap: 'wrap',
+                }}
+              >
+                <div>
+                  <strong style={{ display: 'block', fontSize: 13, color: 'var(--ink)' }}>
+                    {ap.reference} · {ap.item} ({ap.delta})
+                  </strong>
+                  <small style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+                    {ap.reason}
+                  </small>
+                </div>
+                {ap.status === 'PENDING' ? (
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button
+                      type="button"
+                      className="button"
+                      style={{ background: '#fff' }}
+                      onClick={() => setPendingDecision({ adj: ap, decision: 'REJECTED' })}
+                    >
+                      Reject
+                    </button>
+                    <button
+                      type="button"
+                      className="button primary"
+                      onClick={() => setPendingDecision({ adj: ap, decision: 'APPROVED' })}
+                    >
+                      Approve
+                    </button>
+                  </div>
+                ) : (
+                  <span className={`acct-pill ${ap.status === 'APPROVED' ? 'green' : 'gray'}`}>
+                    ● {ap.status}
+                  </span>
+                )}
+              </div>
+            ))
+          )}
+        </section>
+      )}
 
       <StockLedgerModal
         ledgerRow={ledgerRow}

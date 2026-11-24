@@ -101,8 +101,14 @@ export function CreateReservationModal({
           />
         </label>
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
-          <Button type="submit" variant="primary" loading={submitting} disabled={!newVariantId}>
-            <span>{submitting ? 'Submitting…' : 'Create reservation'}</span>
+          <Button
+            type="submit"
+            variant="primary"
+            loading={submitting}
+            loadingText="Submitting…"
+            disabled={!newVariantId}
+          >
+            <span>Create reservation</span>
             <ArrowRight size={15} />
           </Button>
         </div>

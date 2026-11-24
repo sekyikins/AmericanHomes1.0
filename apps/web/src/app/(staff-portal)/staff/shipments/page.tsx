@@ -359,7 +359,7 @@ export default function StaffShipmentsPage() {
     if (typeof window !== 'undefined') {
       const url = new URL(window.location.href);
       url.searchParams.set('shipmentId', shipmentId);
-      window.history.pushState({ shipmentId }, '', url.toString());
+      window.history.pushState({ shipmentId, fromList: true }, '', url.toString());
     }
     try {
       await refreshSelectedShipment(shipmentId);
@@ -435,9 +435,13 @@ export default function StaffShipmentsPage() {
         onBack={() => {
           setView('list');
           if (typeof window !== 'undefined') {
-            const url = new URL(window.location.href);
-            url.searchParams.delete('shipmentId');
-            window.history.pushState({}, '', url.toString());
+            if (window.history.state?.fromList) {
+              window.history.back();
+            } else {
+              const url = new URL(window.location.href);
+              url.searchParams.delete('shipmentId');
+              window.history.replaceState({}, '', url.toString());
+            }
           }
         }}
         onSubmit={handleCreateShipment}
@@ -480,9 +484,13 @@ export default function StaffShipmentsPage() {
         onBack={() => {
           setView('list');
           if (typeof window !== 'undefined') {
-            const url = new URL(window.location.href);
-            url.searchParams.delete('shipmentId');
-            window.history.pushState({}, '', url.toString());
+            if (window.history.state?.fromList) {
+              window.history.back();
+            } else {
+              const url = new URL(window.location.href);
+              url.searchParams.delete('shipmentId');
+              window.history.replaceState({}, '', url.toString());
+            }
           }
         }}
         onAdvanceStatus={handleAdvanceStatus}

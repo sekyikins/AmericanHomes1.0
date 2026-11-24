@@ -72,17 +72,26 @@ export default function StaffOrdersPage() {
   >([]);
 
   const loadVariants = useCallback(async () => {
-    if (variants.length > 0) return;
-    const prodList = await catalogueApi.listAdmin().catch(() => catalogueApi.listPublished().catch(() => []));
+    const prodList = await catalogueApi.listPublished().catch(() => []);
     const opts: VariantOpt[] = [];
     for (const p of (Array.isArray(prodList) ? prodList : []) as Array<{
       name: string;
-      variants?: Array<{ id: string; sku?: string; priceCents?: number }>;
+      isPublished?: boolean;
+      published?: boolean;
+      variants?: Array<{
+        id: string;
+        sku?: string;
+        priceCents?: number;
+        stockLots?: Array<{ available?: number }>;
+      }>;
     }>) {
+      if (p.isPublished === false || p.published === false) continue;
       for (const v of p.variants ?? []) {
+        const available = (v.stockLots ?? []).reduce((s, l) => s + (l.available ?? 0), 0);
+        if (available <= 0) continue;
         opts.push({
           id: v.id,
-          label: `${p.name}${v.sku ? ` (${v.sku})` : ''} — GHS ${((v.priceCents ?? 0) / 100).toLocaleString()}`,
+          label: `${p.name}${v.sku ? ` (${v.sku})` : ''} — GHS ${((v.priceCents ?? 0) / 100).toLocaleString()} · ${available} saleable`,
           priceCents: v.priceCents ?? 0,
         });
       }
@@ -102,7 +111,7 @@ export default function StaffOrdersPage() {
             ],
       );
     }
-  }, [variants.length]);
+  }, []);
 
   const loadData = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);

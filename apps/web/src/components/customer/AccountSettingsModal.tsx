@@ -12,18 +12,21 @@ import {
   X,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   AccountCommunicationsTab,
   AccountNotificationsTab,
   AccountSecurityTab,
 } from '@/components/customer/AccountSettingsTabs';
-import { ConfirmDialog } from '@/components/ui';
+import { Button, ConfirmDialog } from '@/components/ui';
 import { authApi, usersApi } from '@/lib/api';
 import { useToast } from '@/providers/toast.provider';
 import { useAuth } from '@/store/auth.store';
 
 type SettingsTab = 'profile' | 'communications' | 'notifications' | 'security';
+
+const SETTINGS_TAB_STORAGE_KEY = 'ah_acct_settings_active_tab';
+const SETTINGS_DRAFT_STORAGE_KEY = 'ah_acct_settings_draft';
 
 const TABS: { id: SettingsTab; label: string; Icon: typeof User }[] = [
   { id: 'profile', label: 'Profile', Icon: User },
@@ -31,6 +34,15 @@ const TABS: { id: SettingsTab; label: string; Icon: typeof User }[] = [
   { id: 'notifications', label: 'Notifications', Icon: Bell },
   { id: 'security', label: 'Security', Icon: Shield },
 ];
+
+function isValidSettingsTab(val: unknown): val is SettingsTab {
+  return (
+    val === 'profile' ||
+    val === 'communications' ||
+    val === 'notifications' ||
+    val === 'security'
+  );
+}
 
 export function AccountSettingsModal({
   open,
@@ -42,10 +54,17 @@ export function AccountSettingsModal({
   const router = useRouter();
   const { user, setAuth, clearAuth, refreshAuth } = useAuth();
   const { showToast } = useToast();
-  const [activeTab, setActiveTab] = useState<SettingsTab>('profile');
+  const [activeTab, setActiveTab] = useState<SettingsTab>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = window.sessionStorage.getItem(SETTINGS_TAB_STORAGE_KEY);
+      if (isValidSettingsTab(stored)) return stored;
+    }
+    return 'profile';
+  });
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
+  const [hasUnsavedProfileEdits, setHasUnsavedProfileEdits] = useState(false);
 
   const [whatsappTx, setWhatsappTx] = useState(true);
   const [promos, setPromos] = useState(false);
@@ -60,13 +79,117 @@ export function AccountSettingsModal({
   const [showOtherDevices, setShowOtherDevices] = useState(false);
   const [confirmSignOut, setConfirmSignOut] = useState(false);
 
+  const tabListRef = useRef<HTMLDivElement | null>(null);
+  const tabButtonRefs = useRef<Record<SettingsTab, HTMLButtonElement | null>>({
+    profile: null,
+    communications: null,
+    notifications: null,
+    security: null,
+  });
+  const initializedUserIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = window.sessionStorage.getItem(SETTINGS_DRAFT_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as {
+          userId?: string;
+          activeTab?: SettingsTab;
+          firstName?: string;
+          lastName?: string;
+          email?: string;
+          hasUnsavedProfileEdits?: boolean;
+          whatsappTx?: boolean;
+          promos?: boolean;
+          notifOrders?: boolean;
+          notifReservations?: boolean;
+          notifRequests?: boolean;
+        };
+        if (isValidSettingsTab(parsed.activeTab)) {
+          setActiveTab(parsed.activeTab);
+        }
+        if (parsed.hasUnsavedProfileEdits && (!user?.id || parsed.userId === user.id)) {
+          setFirstName(parsed.firstName ?? '');
+          setLastName(parsed.lastName ?? '');
+          setEmail(parsed.email ?? '');
+          setHasUnsavedProfileEdits(true);
+          if (user?.id) initializedUserIdRef.current = user.id;
+        }
+        if (typeof parsed.whatsappTx === 'boolean') setWhatsappTx(parsed.whatsappTx);
+        if (typeof parsed.promos === 'boolean') setPromos(parsed.promos);
+        if (typeof parsed.notifOrders === 'boolean') setNotifOrders(parsed.notifOrders);
+        if (typeof parsed.notifReservations === 'boolean') setNotifReservations(parsed.notifReservations);
+        if (typeof parsed.notifRequests === 'boolean') setNotifRequests(parsed.notifRequests);
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }, [user?.id]);
+
   useEffect(() => {
     if (!user) return;
+    if (hasUnsavedProfileEdits && initializedUserIdRef.current === user.id) return;
+    initializedUserIdRef.current = user.id;
     const parts = (user.name ?? '').trim().split(/\s+/).filter(Boolean);
     setFirstName(parts[0] ?? '');
     setLastName(parts.slice(1).join(' '));
     setEmail(user.email ?? '');
-  }, [user]);
+  }, [user, hasUnsavedProfileEdits]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.sessionStorage.setItem(SETTINGS_TAB_STORAGE_KEY, activeTab);
+      window.sessionStorage.setItem(
+        SETTINGS_DRAFT_STORAGE_KEY,
+        JSON.stringify({
+          userId: user?.id,
+          activeTab,
+          firstName,
+          lastName,
+          email,
+          hasUnsavedProfileEdits,
+          whatsappTx,
+          promos,
+          notifOrders,
+          notifReservations,
+          notifRequests,
+        }),
+      );
+    } catch {
+      // ignore storage errors
+    }
+  }, [
+    user?.id,
+    activeTab,
+    firstName,
+    lastName,
+    email,
+    hasUnsavedProfileEdits,
+    whatsappTx,
+    promos,
+    notifOrders,
+    notifReservations,
+    notifRequests,
+  ]);
+
+  useEffect(() => {
+    if (!open) return;
+    const raf = window.requestAnimationFrame(() => {
+      const btn = tabButtonRefs.current[activeTab];
+      const container = tabListRef.current;
+      if (btn && container) {
+        const targetLeft =
+          btn.offsetLeft - container.clientWidth / 2 + btn.clientWidth / 2;
+        container.scrollTo({
+          left: Math.max(0, targetLeft),
+          behavior: 'smooth',
+        });
+      }
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [open, activeTab]);
 
   useEffect(() => {
     if (!open) return;
@@ -91,6 +214,7 @@ export function AccountSettingsModal({
         ...(email.trim() ? { email: email.trim() } : {}),
       });
       await refreshAuth();
+      setHasUnsavedProfileEdits(false);
       setSaved(true);
       showToast('Account settings saved', 'success');
       setTimeout(() => setSaved(false), 2500);
@@ -153,10 +277,18 @@ export function AccountSettingsModal({
         </div>
 
         <div className="acct-modal-body">
-          <div className="acct-modal-nav" role="tablist" aria-label="Settings sections">
+          <div
+            ref={tabListRef}
+            className="acct-modal-nav"
+            role="tablist"
+            aria-label="Settings sections"
+          >
             {TABS.map(({ id, label, Icon }) => (
               <button
                 key={id}
+                ref={(el) => {
+                  tabButtonRefs.current[id] = el;
+                }}
                 type="button"
                 role="tab"
                 aria-selected={activeTab === id}
@@ -189,7 +321,7 @@ export function AccountSettingsModal({
                   </span>
                 </div>
 
-                <div className="req-row-2" style={{ marginTop: 20 }}>
+                <div className="req-row-2 acct-name-grid" style={{ marginTop: 16 }}>
                   <div className="req-field">
                     <label htmlFor="acct-first">
                       <strong>First name</strong>
@@ -197,7 +329,10 @@ export function AccountSettingsModal({
                     <input
                       id="acct-first"
                       value={firstName}
-                      onChange={(e) => setFirstName(e.target.value)}
+                      onChange={(e) => {
+                        setFirstName(e.target.value);
+                        setHasUnsavedProfileEdits(true);
+                      }}
                     />
                   </div>
                   <div className="req-field">
@@ -207,7 +342,10 @@ export function AccountSettingsModal({
                     <input
                       id="acct-last"
                       value={lastName}
-                      onChange={(e) => setLastName(e.target.value)}
+                      onChange={(e) => {
+                        setLastName(e.target.value);
+                        setHasUnsavedProfileEdits(true);
+                      }}
                     />
                   </div>
                 </div>
@@ -223,11 +361,12 @@ export function AccountSettingsModal({
                     </span>
                   </div>
                   <small className="acct-hint">
-                    Your verified phone number is used to sign in and receive transactional updates.
+                    Used for sign-in and transactional updates. Contact support to change your verified
+                    number.
                   </small>
                 </div>
 
-                <div className="req-field">
+                <div className="req-field" style={{ marginBottom: 0 }}>
                   <label htmlFor="acct-email">
                     <strong>Email address</strong>
                     <small>Optional</small>
@@ -237,16 +376,11 @@ export function AccountSettingsModal({
                     type="email"
                     value={email}
                     placeholder="Add email address"
-                    onChange={(e) => setEmail(e.target.value)}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      setHasUnsavedProfileEdits(true);
+                    }}
                   />
-                </div>
-
-                <div className="request-info-banner" style={{ marginBottom: 0 }}>
-                  <Info size={16} style={{ flexShrink: 0, marginTop: 1 }} />
-                  <span>
-                    To change your verified phone number, contact AmericanHomes support for identity
-                    verification.
-                  </span>
                 </div>
               </div>
             )}
@@ -286,6 +420,7 @@ export function AccountSettingsModal({
                 <button
                   type="button"
                   className="button acct-signout-btn"
+                  disabled={saving}
                   onClick={() => setConfirmSignOut(true)}
                 >
                   <LogOut size={15} />
@@ -298,17 +433,18 @@ export function AccountSettingsModal({
                 )}
               </div>
               <div className="acct-modal-footer-actions">
-                <button type="button" className="button" onClick={onClose}>
+                <button type="button" className="button" disabled={saving} onClick={onClose}>
                   Cancel
                 </button>
-                <button
+                <Button
                   type="button"
-                  className="button primary"
-                  disabled={saving}
+                  variant="primary"
+                  loading={saving}
+                  loadingText="Saving…"
                   onClick={handleSave}
                 >
-                  {saving ? 'Saving…' : 'Save changes'}
-                </button>
+                  Save changes
+                </Button>
               </div>
             </div>
           </section>

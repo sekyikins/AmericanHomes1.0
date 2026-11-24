@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowRight, Clock, CreditCard, ShieldCheck, User, Warehouse 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { OrderConfirmedCard } from '@/components/storefront/OrderConfirmedModal';
+import { BackLink, Button } from '@/components/ui';
 import { ordersApi, paymentsApi } from '@/lib/api';
 import { formatGHS } from '@/lib/formatting/currency';
 import { useAuth } from '@/store/auth.store';
@@ -107,10 +108,10 @@ export default function CheckoutPage() {
 
   return (
     <main className="acct-shell">
-      <Link href="/shop" className="pdp-back">
+      <BackLink href="/shop" className="pdp-back">
         <ArrowLeft size={15} />
         <span>Back to shop</span>
-      </Link>
+      </BackLink>
 
       <div className="acct-head">
         <div>
@@ -299,21 +300,18 @@ export default function CheckoutPage() {
             </div>
           )}
 
-          <button
+          <Button
             type="button"
+            variant="primary"
+            className="bag-checkout-btn"
+            loading={submitting}
+            loadingText="Preparing checkout…"
+            disabled={items.length === 0 || (hasDisclosedDefects && !defectsAcknowledged)}
             onClick={handlePay}
-            disabled={submitting || (hasDisclosedDefects && !defectsAcknowledged)}
-            className="button primary bag-checkout-btn"
           >
             <CreditCard size={15} />
-            <span>
-              {submitting
-                ? 'Preparing checkout...'
-                : user
-                  ? `Pay ${formatGHS(subtotalPesewas)}`
-                  : 'Sign in to pay'}
-            </span>
-          </button>
+            <span>{user ? `Pay ${formatGHS(subtotalPesewas)}` : 'Sign in to pay'}</span>
+          </Button>
 
           <div className="bag-secure-note">
             <ShieldCheck size={13} />

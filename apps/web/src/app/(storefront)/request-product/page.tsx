@@ -4,6 +4,7 @@ import { ArrowRight, Check, ImagePlus, Info, X } from 'lucide-react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState, type ChangeEvent, type FormEvent } from 'react';
+import { Button } from '@/components/ui';
 import { useUnsavedChanges } from '@/hooks/use-unsaved-changes';
 import { requestsApi } from '@/lib/api';
 import { useToast } from '@/providers/toast.provider';
@@ -405,16 +406,17 @@ function RequestProductContent() {
           </div>
         )}
 
-        <button
+        <Button
           type="submit"
-          className="button primary"
-          disabled={submitting}
-          aria-busy={submitting || undefined}
+          variant="primary"
+          loading={submitting}
+          loadingText="Submitting request…"
+          disabled={!productName.trim() || !description.trim()}
           style={{ width: '100%', minHeight: 46, marginTop: 18 }}
         >
-          <span>{submitting ? 'Submitting request…' : 'Submit request'}</span>
+          <span>Submit request</span>
           <ArrowRight size={15} strokeWidth={2.2} />
-        </button>
+        </Button>
       </form>
     </main>
   );

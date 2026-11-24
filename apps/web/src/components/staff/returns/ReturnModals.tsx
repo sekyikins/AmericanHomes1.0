@@ -81,8 +81,14 @@ export function CreateReturnModal({
           />
         </label>
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
-          <Button type="submit" variant="primary" loading={submitting} disabled={!orderId}>
-            <span>{submitting ? 'Creating…' : 'Create return'}</span>
+          <Button
+            type="submit"
+            variant="primary"
+            loading={submitting}
+            loadingText="Creating…"
+            disabled={!orderId || !returnReason.trim()}
+          >
+            <span>Create return</span>
             <ArrowRight size={15} />
           </Button>
         </div>

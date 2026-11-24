@@ -158,8 +158,20 @@ export function DemandCreateModal({
         </label>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }}>
-          <Button type="submit" variant="primary" loading={submitting}>
-            <span>{submitting ? 'Saving…' : 'Create record'}</span>
+          <Button
+            type="submit"
+            variant="primary"
+            loading={submitting}
+            loadingText="Saving…"
+            disabled={
+              mode === 'allocations'
+                ? !newRequestId || !newVariantId
+                : mode === 'sourcing'
+                  ? !newShipmentId || !newProduct.trim()
+                  : !newProduct.trim()
+            }
+          >
+            <span>Create record</span>
             <ArrowRight size={15} />
           </Button>
         </div>

@@ -3,9 +3,10 @@
 import { ArrowLeft, Clock, PackageCheck, Sparkles, Truck } from 'lucide-react';
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
-import { EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
+import { BackLink, EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
 import { notificationsApi } from '@/lib/api';
 import { mapCustomerNotifications, type CustomerNotificationItem } from '@/lib/customerAccount';
+import { useToast } from '@/providers/toast.provider';
 
 const TABS: Array<'All' | 'Orders' | 'Requests' | 'Account'> = [
   'All',
@@ -15,10 +16,13 @@ const TABS: Array<'All' | 'Orders' | 'Requests' | 'Account'> = [
 ];
 
 export default function NotificationsPage() {
+  const { showToast } = useToast();
   const [items, setItems] = useState<CustomerNotificationItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'All' | 'Orders' | 'Requests' | 'Account'>('All');
+  const [markingAll, setMarkingAll] = useState(false);
+  const [markingId, setMarkingId] = useState<string | null>(null);
 
   const loadNotifications = useCallback(async () => {
     setLoading(true);
@@ -42,16 +46,45 @@ export default function NotificationsPage() {
     activeTab === 'All' ? items : items.filter((item) => item.category === activeTab);
 
   const markAllRead = async () => {
+    if (markingAll) return;
     const unreadIds = items.filter((i) => i.unread).map((i) => i.id);
-    setItems((prev) => prev.map((item) => ({ ...item, unread: false })));
-    await Promise.all(unreadIds.map((id) => notificationsApi.markRead(id).catch(() => {})));
+    if (unreadIds.length === 0) return;
+    setMarkingAll(true);
+    try {
+      await Promise.all(unreadIds.map((id) => notificationsApi.markRead(id)));
+      setItems((prev) => prev.map((item) => ({ ...item, unread: false })));
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('ah:notifications-updated'));
+      }
+      showToast(
+        unreadIds.length === 1 ? 'Message marked as read' : 'All messages marked as read',
+        'success',
+      );
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Unable to mark notifications as read', 'error');
+    } finally {
+      setMarkingAll(false);
+    }
   };
 
   const toggleRead = async (id: string) => {
-    setItems((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, unread: false } : item)),
-    );
-    await notificationsApi.markRead(id).catch(() => {});
+    const target = items.find((i) => i.id === id);
+    if (!target || !target.unread || markingId === id) return;
+    setMarkingId(id);
+    try {
+      await notificationsApi.markRead(id);
+      setItems((prev) =>
+        prev.map((item) => (item.id === id ? { ...item, unread: false } : item)),
+      );
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('ah:notifications-updated'));
+      }
+      showToast('Message marked as read', 'success');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Unable to mark notification as read', 'error');
+    } finally {
+      setMarkingId(null);
+    }
   };
 
   const renderIcon = (item: CustomerNotificationItem) => {
@@ -63,10 +96,10 @@ export default function NotificationsPage() {
 
   return (
     <main className="notif-shell" data-node-id="2:9900">
-      <Link href="/account" className="pdp-back">
+      <BackLink href="/account" className="pdp-back">
         <ArrowLeft size={15} />
         <span>Back to account</span>
-      </Link>
+      </BackLink>
 
       <div className="notif-head">
         <div>
@@ -77,10 +110,12 @@ export default function NotificationsPage() {
           <button
             type="button"
             className="link"
+            disabled={markingAll}
+            aria-busy={markingAll || undefined}
             style={{ border: 0, background: 'transparent', padding: 0 }}
             onClick={markAllRead}
           >
-            Mark all as read ({unreadCount})
+            {markingAll ? 'Marking as read…' : `Mark all as read (${unreadCount})`}
           </button>
         )}
       </div>
@@ -120,6 +155,8 @@ export default function NotificationsPage() {
               key={item.id}
               type="button"
               className="notif-item"
+              disabled={markingId === item.id}
+              aria-busy={markingId === item.id || undefined}
               onClick={() => toggleRead(item.id)}
             >
               <span className={`notif-icon ${item.tone}`} aria-hidden="true">

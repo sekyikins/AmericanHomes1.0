@@ -16,7 +16,7 @@ import {
   OrderReceiptModal,
   OrderReturnModal,
 } from '@/components/customer/OrderActionModals';
-import { EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
+import { BackLink, EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
 import { ordersApi, paymentsApi, returnsApi } from '@/lib/api';
 import { mapCustomerOrders, type CustomerOrderRecord } from '@/lib/customerAccount';
 import { formatGHS } from '@/lib/formatting/currency';
@@ -130,10 +130,10 @@ export default function OrdersPage() {
 
   return (
     <main className="acct-shell">
-      <Link href="/account" className="pdp-back">
+      <BackLink href="/account" className="pdp-back">
         <ArrowLeft size={15} />
         <span>Back to account</span>
-      </Link>
+      </BackLink>
 
       <div className="acct-head">
         <div>

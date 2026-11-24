@@ -3,7 +3,9 @@
 import { Bell, Home, Menu, ShoppingBag, User, X } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { NavigationHistoryTracker } from '@/components/ui';
+import { notificationsApi } from '@/lib/api';
 import { useAuth } from '@/store/auth.store';
 import { useCart } from '@/store/cart.store';
 import { BagModal } from './BagModal';
@@ -21,6 +23,33 @@ export function CustomerHeader() {
   const { items, setBagOpen } = useCart();
   const { user, loginOpen, setLoginOpen, setPostLoginRedirect } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  const refreshUnreadCount = useCallback(() => {
+    if (!user || user.role === 'STAFF') {
+      setUnreadCount(0);
+      return;
+    }
+    notificationsApi
+      .getMy()
+      .then((rows) => {
+        if (Array.isArray(rows)) {
+          const unread = (rows as Array<{ readAt?: string | null }>).filter((n) => !n.readAt).length;
+          setUnreadCount(unread);
+        }
+      })
+      .catch(() => {});
+  }, [user]);
+
+  useEffect(() => {
+    refreshUnreadCount();
+  }, [refreshUnreadCount, pathname]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.addEventListener('ah:notifications-updated', refreshUnreadCount);
+    return () => window.removeEventListener('ah:notifications-updated', refreshUnreadCount);
+  }, [refreshUnreadCount]);
 
   useEffect(() => {
     setMobileMenuOpen(false);
@@ -42,6 +71,7 @@ export function CustomerHeader() {
 
   return (
     <>
+      <NavigationHistoryTracker />
       <div className="topline">
         <span>Imported quality. Local confidence.</span>
         <span>Warehouse collection in Tema, Ghana</span>
@@ -98,7 +128,7 @@ export function CustomerHeader() {
               }}
             >
               <Bell size={19} strokeWidth={2} />
-              <span className="bell-dot" aria-hidden="true" />
+              {unreadCount > 0 && <span className="bell-dot" aria-hidden="true" />}
             </Link>
             <button
               type="button"
@@ -111,9 +141,13 @@ export function CustomerHeader() {
               {items.length > 0 && <span className="bag-count-pill">{items.length}</span>}
             </button>
             {user && user.role !== 'STAFF' ? (
-              <Link href="/account" className="button primary signin-btn" aria-label="My account">
+              <Link
+                href="/account"
+                className="button primary signin-btn is-authenticated"
+                aria-label="My account"
+              >
                 <User size={16} strokeWidth={2.2} />
-                <span>{user.name?.split(' ')[0] ?? 'Account'}</span>
+                <span className="signin-name">{user.name?.split(' ')[0] ?? 'Account'}</span>
               </Link>
             ) : (
               <button

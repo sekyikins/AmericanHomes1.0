@@ -19,13 +19,14 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState, type FormEvent } from 'react';
-import { EmptyState, ProductDetailSkeleton } from '@/components/ui';
+import { BackLink, Button, EmptyState, ProductDetailSkeleton } from '@/components/ui';
 import { catalogueApi, reservationsApi } from '@/lib/api';
 import {
   mapApiProductToCatalog,
   type CatalogProduct,
 } from '@/lib/data/products';
 import { formatGHS } from '@/lib/formatting/currency';
+import { useToast } from '@/providers/toast.provider';
 import { useAuth } from '@/store/auth.store';
 import { useCart } from '@/store/cart.store';
 
@@ -34,6 +35,7 @@ export default function ProductDetailPage({ params }: { params: { productId: str
   const [loadingProduct, setLoadingProduct] = useState(true);
   const { addItem } = useCart();
   const { user, setLoginOpen } = useAuth();
+  const { showToast } = useToast();
 
   useEffect(() => {
     let active = true;
@@ -65,6 +67,7 @@ export default function ProductDetailPage({ params }: { params: { productId: str
   const [reserveNotes, setReserveNotes] = useState('');
   const [reservedRef, setReservedRef] = useState<string | null>(null);
   const [reserveError, setReserveError] = useState<string | null>(null);
+  const [submittingReserve, setSubmittingReserve] = useState(false);
 
   useEffect(() => {
     if (user && pendingReserveIntent) {
@@ -77,10 +80,10 @@ export default function ProductDetailPage({ params }: { params: { productId: str
   if (loadingProduct) {
     return (
       <main className="page-shell">
-        <Link href="/shop" className="pdp-back">
+        <BackLink href="/shop" className="pdp-back">
           <ArrowLeft size={15} />
           <span>Back to products</span>
-        </Link>
+        </BackLink>
         <ProductDetailSkeleton />
       </main>
     );
@@ -89,10 +92,10 @@ export default function ProductDetailPage({ params }: { params: { productId: str
   if (!product) {
     return (
       <main className="page-shell">
-        <Link href="/shop" className="pdp-back">
+        <BackLink href="/shop" className="pdp-back">
           <ArrowLeft size={15} />
           <span>Back to products</span>
-        </Link>
+        </BackLink>
         <EmptyState
           title="Product not found"
           description="This item may have been unpublished or is no longer available."
@@ -109,6 +112,9 @@ export default function ProductDetailPage({ params }: { params: { productId: str
   const activeVariant = product.variants[selectedVariant] ?? product.variants[0];
   const unitPricePesewas = activeVariant?.pricePesewas ?? product.pricePesewas;
   const totalPesewas = unitPricePesewas * qty;
+  const galleryImages =
+    product.images && product.images.length > 0 ? product.images : [product.image];
+  const activeImage = galleryImages[selectedThumb] ?? galleryImages[0] ?? product.image;
 
   const handleAddToBag = () => {
     for (let i = 0; i < qty; i++) {
@@ -138,7 +144,9 @@ export default function ProductDetailPage({ params }: { params: { productId: str
 
   const handleSubmitReserve = async (e: FormEvent) => {
     e.preventDefault();
+    if (submittingReserve) return;
     setReserveError(null);
+    setSubmittingReserve(true);
     try {
       const created = (await reservationsApi.request({
         productVariantId: activeVariant?.id ?? product.defaultVariantId ?? product.id,
@@ -146,37 +154,42 @@ export default function ProductDetailPage({ params }: { params: { productId: str
         notes: reserveNotes.trim() || undefined,
       })) as { id?: string } | null;
       setReservedRef(created?.id ?? 'SUBMITTED');
+      showToast('Reservation request submitted', 'success');
     } catch (err) {
       setReserveError(
         err instanceof Error ? err.message : 'Unable to submit reservation. Please try again.',
       );
+    } finally {
+      setSubmittingReserve(false);
     }
   };
 
   return (
     <main className="pdp-shell" data-node-id="1:8537">
-      <Link href="/shop" className="pdp-back">
+      <BackLink href="/shop" className="pdp-back">
         <ArrowLeft size={15} />
         <span>Back to products</span>
-      </Link>
+      </BackLink>
 
       <div className="pdp-grid">
         <div className="pdp-gallery">
           <div className="pdp-main-img-wrap">
-            <img src={product.image} alt={product.name} className="pdp-main-img" />
-            <span className="pdp-photo-tag">ACTUAL PRODUCT PHOTOGRAPHY</span>
+            <img src={activeImage} alt={product.name} className="pdp-main-img" />
+            <span className="pdp-photo-tag">
+              ({selectedThumb + 1}/{galleryImages.length})
+            </span>
           </div>
 
           <div className="pdp-thumbs">
-            {[0, 1, 2].map((idx) => (
+            {galleryImages.map((imgUrl, idx) => (
               <button
-                key={idx}
+                key={`${imgUrl}-${idx}`}
                 type="button"
                 onClick={() => setSelectedThumb(idx)}
                 className={`pdp-thumb ${selectedThumb === idx ? 'active' : ''}`}
-                aria-label={`View photo ${idx + 1}`}
+                aria-label={`View photo ${idx + 1} of ${galleryImages.length}`}
               >
-                <img src={product.image} alt="" />
+                <img src={imgUrl} alt={`${product.name} photo ${idx + 1}`} />
               </button>
             ))}
           </div>
@@ -243,6 +256,7 @@ export default function ProductDetailPage({ params }: { params: { productId: str
               <button
                 type="button"
                 aria-label="Decrease quantity"
+                disabled={qty <= 1 || product.availableCount <= 0}
                 onClick={() => setQty((q) => Math.max(1, q - 1))}
               >
                 <Minus size={14} />
@@ -251,6 +265,7 @@ export default function ProductDetailPage({ params }: { params: { productId: str
               <button
                 type="button"
                 aria-label="Increase quantity"
+                disabled={qty >= Math.max(1, product.availableCount) || product.availableCount <= 0}
                 onClick={() => setQty((q) => Math.min(product.availableCount, q + 1))}
               >
                 <Plus size={14} />
@@ -260,6 +275,7 @@ export default function ProductDetailPage({ params }: { params: { productId: str
             <button
               type="button"
               className="button primary pdp-add-btn"
+              disabled={product.availableCount <= 0}
               onClick={handleAddToBag}
             >
               {justAdded ? (
@@ -278,6 +294,7 @@ export default function ProductDetailPage({ params }: { params: { productId: str
 
           <button
             type="button"
+            disabled={product.availableCount <= 0}
             onClick={handleOpenReserve}
             className="pdp-reserve-link"
             style={{ width: '100%', border: 0, background: 'transparent', padding: 0 }}
@@ -441,10 +458,16 @@ export default function ProductDetailPage({ params }: { params: { productId: str
                         {reserveError}
                       </div>
                     )}
-                    <button type="submit" className="button primary login-submit">
+                    <Button
+                      type="submit"
+                      variant="primary"
+                      className="login-submit"
+                      loading={submittingReserve}
+                      loadingText="Submitting…"
+                    >
                       <span>Submit reservation request</span>
                       <ArrowRight size={15} />
-                    </button>
+                    </Button>
                   </form>
                 </>
               )}

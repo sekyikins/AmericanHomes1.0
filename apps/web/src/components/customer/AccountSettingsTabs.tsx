@@ -11,6 +11,7 @@ import {
   ShoppingBag,
   Sparkles,
 } from 'lucide-react';
+import { Button } from '@/components/ui';
 
 function Toggle({
   checked,
@@ -266,16 +267,17 @@ export function AccountSecurityTab({
         </div>
       </div>
 
-      <button
+      <Button
         type="button"
-        className="button"
+        variant="secondary"
         style={{ marginTop: 18 }}
-        disabled={revokingOthers}
+        loading={revokingOthers}
+        loadingText="Signing out…"
         onClick={onRevokeOtherSessions}
       >
         <LogOut size={15} />
-        <span>{revokingOthers ? 'Signing out…' : 'Sign out of all other sessions'}</span>
-      </button>
+        <span>Sign out of all other sessions</span>
+      </Button>
     </div>
   );
 }

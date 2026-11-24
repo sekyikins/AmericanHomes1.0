@@ -3,6 +3,7 @@
 import { ArrowRight, Eye, EyeOff, Home } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState, type FormEvent } from 'react';
+import { Button } from '@/components/ui';
 import { authApi } from '@/lib/api';
 import { useToast } from '@/providers/toast.provider';
 import { useAuth } from '@/store/auth.store';
@@ -173,15 +174,17 @@ export function StaffLoginCard({ onSuccess }: { onSuccess?: () => void }) {
             </div>
           )}
 
-          <button
+          <Button
             type="submit"
-            className="button primary login-submit"
-            disabled={submitting}
-            aria-busy={submitting || undefined}
+            variant="primary"
+            className="login-submit"
+            loading={submitting}
+            loadingText="Signing in…"
+            disabled={!staffEmail.trim() || !staffPassword}
           >
-            <span>{submitting ? 'Signing in…' : 'Sign in to Staff Portal'}</span>
+            <span>Sign in to Staff Portal</span>
             <ArrowRight size={16} strokeWidth={2.2} />
-          </button>
+          </Button>
         </form>
       </div>
     </div>

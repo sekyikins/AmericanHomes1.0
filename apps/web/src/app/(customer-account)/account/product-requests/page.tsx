@@ -3,7 +3,7 @@
 import { ArrowLeft, Plus } from 'lucide-react';
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
-import { ConfirmDialog, EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
+import { BackLink, ConfirmDialog, EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
 import { requestsApi } from '@/lib/api';
 import { mapCustomerRequests, type CustomerRequestRecord } from '@/lib/customerAccount';
 import { formatGHS } from '@/lib/formatting/currency';
@@ -67,10 +67,10 @@ export default function ProductRequestsPage() {
 
   return (
     <main className="acct-shell">
-      <Link href="/account" className="pdp-back">
+      <BackLink href="/account" className="pdp-back">
         <ArrowLeft size={15} />
         <span>Back to account</span>
-      </Link>
+      </BackLink>
 
       <div className="acct-head">
         <div>

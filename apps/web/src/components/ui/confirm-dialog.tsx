@@ -2,6 +2,7 @@
 
 import { AlertTriangle, X } from 'lucide-react';
 import { useEffect, useRef } from 'react';
+import { Button } from './button';
 
 export interface ConfirmDialogProps {
   open: boolean;
@@ -135,10 +136,11 @@ export function ConfirmDialog({
             >
               {cancelLabel}
             </button>
-            <button
+            <Button
               type="button"
-              className="button primary"
-              disabled={loading}
+              variant="primary"
+              loading={loading}
+              loadingText="Processing…"
               style={
                 destructive
                   ? { background: '#b42318', borderColor: '#b42318', color: '#fff' }
@@ -146,8 +148,8 @@ export function ConfirmDialog({
               }
               onClick={onConfirm}
             >
-              {loading ? 'Processing…' : confirmLabel}
-            </button>
+              {confirmLabel}
+            </Button>
           </div>
         </div>
       </section>

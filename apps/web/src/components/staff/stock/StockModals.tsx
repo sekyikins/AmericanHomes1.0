@@ -206,10 +206,11 @@ export function StockActionModal({
               type="submit"
               variant="primary"
               loading={submitting}
+              loadingText="Submitting…"
               disabled={!selectedAdjRow}
               style={{ width: '100%' }}
             >
-              {submitting ? 'Submitting…' : 'Submit for approval'}
+              Submit for approval
             </Button>
           </form>
         </>
@@ -252,9 +253,11 @@ export function StockActionModal({
               type="submit"
               variant="primary"
               loading={submitting}
+              loadingText="Creating…"
+              disabled={!stkRef.trim()}
               style={{ width: '100%' }}
             >
-              {submitting ? 'Creating…' : 'Create & start counting'}
+              Create &amp; start counting
             </Button>
           </form>
         </>

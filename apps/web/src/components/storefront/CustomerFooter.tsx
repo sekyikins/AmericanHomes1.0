@@ -74,7 +74,7 @@ export function CustomerFooter() {
             </ul>
           </div>
 
-          <div>
+          <div className="footer-subscribe-col">
             <h4 className="footer-heading">Stay informed</h4>
             <p className="footer-desc" style={{ marginTop: 0, marginBottom: 14 }}>
               Get notified on new arrivals and product updates.

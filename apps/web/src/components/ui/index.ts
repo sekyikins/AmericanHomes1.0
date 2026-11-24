@@ -1,3 +1,4 @@
+export * from './back-link';
 export * from './badge';
 export * from './button';
 export * from './confirm-dialog';

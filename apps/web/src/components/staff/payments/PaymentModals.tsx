@@ -206,8 +206,14 @@ export function RecordPaymentModal({
         )}
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
-          <Button type="submit" variant="primary" loading={submitting} disabled={!orderId}>
-            <span>{submitting ? 'Submitting…' : 'Submit for approval'}</span>
+          <Button
+            type="submit"
+            variant="primary"
+            loading={submitting}
+            loadingText="Submitting…"
+            disabled={!orderId || !amountGhs.trim()}
+          >
+            <span>Submit for approval</span>
             <ArrowRight size={15} />
           </Button>
         </div>
