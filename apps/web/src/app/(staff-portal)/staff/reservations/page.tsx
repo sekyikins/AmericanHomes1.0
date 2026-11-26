@@ -62,6 +62,7 @@ export default function StaffReservationsPage() {
   const [selected, setSelected] = useState<ReservationRow | null>(null);
   const [decisionNote, setDecisionNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [converting, setConverting] = useState(false);
   const [confirmDecline, setConfirmDecline] = useState(false);
 
   const [newCustomer, setNewCustomer] = useState('');
@@ -230,6 +231,33 @@ export default function StaffReservationsPage() {
       showToast(err instanceof Error ? err.message : 'Unable to approve reservation', 'error');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleConvertToOrder = async () => {
+    if (!selected || converting) return;
+    setConverting(true);
+    try {
+      const res = await reservationsApi.convertToOrder(
+        selected.id,
+        decisionNote.trim() || undefined,
+      );
+      setModalMode(null);
+      const ordRef = res?.order?.id
+        ? `ORD-${String(res.order.id).slice(-6).toUpperCase()}`
+        : 'Sales Order';
+      showToast(
+        `Reservation ${selected.reference} converted to ${ordRef} (stock hold transferred)`,
+        'success',
+      );
+      await loadData(true);
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : 'Unable to convert reservation to order',
+        'error',
+      );
+    } finally {
+      setConverting(false);
     }
   };
 
@@ -433,9 +461,11 @@ export default function StaffReservationsPage() {
         selected={selected}
         decisionNote={decisionNote}
         submitting={submitting}
+        converting={converting}
         onDecisionNoteChange={setDecisionNote}
         onDeclineClick={() => setConfirmDecline(true)}
         onApprove={handleApprove}
+        onConvertToOrder={handleConvertToOrder}
         onClose={() => setModalMode(null)}
       />
 

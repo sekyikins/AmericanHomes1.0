@@ -52,4 +52,13 @@ export class ReservationsController {
   cancelOwn(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.reservations.cancelOwnReservation(id, user.id);
   }
+
+  @Post(':id/convert')
+  convertToOrder(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: { notes?: string },
+  ) {
+    return this.reservations.convertToOrder(id, user, dto?.notes);
+  }
 }

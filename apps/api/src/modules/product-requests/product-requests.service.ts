@@ -71,9 +71,20 @@ export class ProductRequestsService {
   async review(id: string, dto: ReviewRequestDto, staffId?: string) {
     const existing = await this.prisma.productRequest.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException(`ProductRequest ${id} not found`);
+    const quotePrefix =
+      dto.quotedPriceCents && dto.quotedPriceCents > 0
+        ? `[Quoted Landed Price: GHS ${(dto.quotedPriceCents / 100).toLocaleString()}]`
+        : '';
+    const mergedNotes = [quotePrefix, dto.notes?.trim()].filter(Boolean).join(' ') || existing.notes;
     const updated = await this.prisma.productRequest.update({
       where: { id },
-      data: { status: dto.decision, notes: dto.notes },
+      data: {
+        status: dto.decision,
+        notes: mergedNotes,
+        ...(dto.quotedPriceCents && dto.quotedPriceCents > 0
+          ? { budgetCents: dto.quotedPriceCents }
+          : {}),
+      },
     });
     await this.audit.record({
       actorId: staffId,
@@ -81,16 +92,20 @@ export class ProductRequestsService {
       entityType: 'ProductRequest',
       entityId: id,
       before: { status: existing.status },
-      after: { status: dto.decision, notes: dto.notes },
+      after: { status: dto.decision, quotedPriceCents: dto.quotedPriceCents, notes: mergedNotes },
     });
+    const quoteNotice =
+      dto.quotedPriceCents && dto.quotedPriceCents > 0
+        ? ` Estimated landed price quote: GHS ${(dto.quotedPriceCents / 100).toLocaleString()}.`
+        : '';
     await this.notifications.notifyCustomerByProfileId(
       existing.customerId,
-      dto.decision === 'APPROVED_FOR_SOURCING'
-        ? 'Product request approved'
+      dto.decision === 'APPROVED_FOR_SOURCING' || dto.decision === 'SOURCING'
+        ? 'Product request approved & quoted'
         : 'Product request updated',
-      dto.decision === 'APPROVED_FOR_SOURCING'
-        ? `Your product request for "${existing.productName}" has been approved for sourcing.`
-        : `Your request for "${existing.productName}" is now ${dto.decision}.`,
+      dto.decision === 'APPROVED_FOR_SOURCING' || dto.decision === 'SOURCING'
+        ? `Your product request for "${existing.productName}" has been approved for sourcing.${quoteNotice}`
+        : `Your request for "${existing.productName}" is now ${dto.decision}.${quoteNotice}`,
       'REQUESTS',
     );
     return updated;

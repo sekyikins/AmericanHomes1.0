@@ -1,4 +1,6 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
+import { nextDocumentNumber } from '../../common/utils/document-number';
 import { PaginationDto, paginationParams } from '../../common/utils/pagination';
 import { PrismaService } from '../../database/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -184,5 +186,118 @@ export class ReservationsService {
       where: { status: 'APPROVED', expiresAt: { lt: new Date() } },
       data: { status: 'EXPIRED' },
     });
+  }
+
+  async convertToOrder(id: string, actor: AuthenticatedUser, notes?: string) {
+    const existing = await this.prisma.reservation.findUnique({
+      where: { id },
+      include: {
+        customer: { include: { user: true } },
+        variant: { include: { product: true } },
+      },
+    });
+    if (!existing) throw new NotFoundException(`Reservation ${id} not found`);
+
+    const isStaff = actor.role === 'STAFF';
+    if (!isStaff && existing.customer.userId !== actor.id) {
+      throw new ForbiddenException('You can only convert your own reservation');
+    }
+    if (!['PENDING', 'APPROVED', 'ACTIVE'].includes(existing.status)) {
+      throw new BadRequestException(
+        `Reservation with status "${existing.status}" cannot be converted to an order`,
+      );
+    }
+
+    const totalCents = existing.variant.priceCents * existing.quantity;
+    const resRef = `RES-${existing.id.slice(-6).toUpperCase()}`;
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const year = new Date().getFullYear();
+      const reference = await nextDocumentNumber(tx, `ORD_${year}`, `AH-ORD-${year}`);
+      const createdOrder = await tx.salesOrder.create({
+        data: {
+          reference,
+          customerId: existing.customerId,
+          source: existing.source || 'ONLINE',
+          status: 'CONFIRMED',
+          orderStatus: 'CONFIRMED',
+          paymentStatus: 'PENDING',
+          fulfilmentStatus: 'NOT_STARTED',
+          totalCents,
+          notes: notes?.trim() || `Converted from reservation ${resRef}`,
+          lines: {
+            create: [
+              {
+                variantId: existing.variantId,
+                quantity: existing.quantity,
+                unitPriceCents: existing.variant.priceCents,
+              },
+            ],
+          },
+        },
+        include: { lines: true },
+      });
+
+      // Transfer active reservation stock hold directly to the new SalesOrder without double-committing stock
+      const activeHolds = await tx.stockHold.findMany({
+        where: {
+          referenceType: 'RESERVATION',
+          referenceId: existing.id,
+          status: 'ACTIVE',
+        },
+      });
+      if (activeHolds.length > 0) {
+        await tx.stockHold.updateMany({
+          where: { id: { in: activeHolds.map((h) => h.id) } },
+          data: {
+            referenceType: 'ORDER',
+            referenceId: createdOrder.id,
+            reason: 'RESERVATION_CONVERTED_TO_ORDER',
+          },
+        });
+      }
+
+      // Give the converted order a bounded payment window so unpaid orders do not hold stock forever
+      const paymentWindowHours = 24;
+      await tx.checkoutSession.create({
+        data: {
+          customerId: existing.customerId,
+          orderId: createdOrder.id,
+          holdId: activeHolds[0]?.id,
+          status: 'ACTIVE',
+          expiresAt: new Date(Date.now() + paymentWindowHours * 60 * 60 * 1000),
+        },
+      });
+
+      const updatedReservation = await tx.reservation.update({
+        where: { id: existing.id },
+        data: {
+          status: 'FULFILLED',
+          notes: notes?.trim()
+            ? `${existing.notes ? `${existing.notes} · ` : ''}${notes.trim()}`
+            : existing.notes,
+        },
+      });
+
+      return { reservation: updatedReservation, order: createdOrder };
+    });
+
+    await this.audit.record({
+      actorId: actor.id,
+      action: 'RESERVATION_CONVERTED_TO_ORDER',
+      entityType: 'Reservation',
+      entityId: existing.id,
+      before: { status: existing.status },
+      after: { status: 'FULFILLED', orderId: result.order.id, totalCents },
+    });
+
+    await this.notifications.notifyCustomerByProfileId(
+      existing.customerId,
+      'Reservation converted to order',
+      `Your reservation (${resRef}) for ${existing.variant.product.name} has been converted to order ORD-${result.order.id.slice(-6).toUpperCase()}. Proceed with payment to unlock warehouse collection.`,
+      'ORDERS',
+    );
+
+    return result;
   }
 }

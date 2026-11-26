@@ -19,6 +19,7 @@ interface PermissionGroupModalProps {
   onGroupNameChange: (value: string) => void;
   onMembersLabelChange: (value: string) => void;
   onToggleCode: (code: string) => void;
+  onToggleSection: (codes: string[]) => void;
   onSubmit: (e: FormEvent) => void;
   onClose: () => void;
 }
@@ -33,9 +34,11 @@ export function PermissionGroupModal({
   onGroupNameChange,
   onMembersLabelChange,
   onToggleCode,
+  onToggleSection,
   onSubmit,
   onClose,
 }: PermissionGroupModalProps) {
+  const totalKnownCount = KNOWN_PERMISSION_CODES.size;
   return (
     <StaffModal
       open={Boolean(modalMode)}
@@ -58,8 +61,9 @@ export function PermissionGroupModal({
         {modalMode === 'create' ? 'Create permission group' : 'Permission group'}
       </h2>
       <p className="review-sub">
-        Effective access combines groups and explicit overrides. Approval remains separate
-        from performance.
+        {isOwnerGroup
+          ? 'Owner is an intrinsic system group that always exists. Anyone assigned to it automatically has unrestricted access to all permissions.'
+          : 'Effective access combines groups and explicit overrides. Approval remains separate from performance.'}
       </p>
 
       <form onSubmit={onSubmit}>
@@ -96,10 +100,12 @@ export function PermissionGroupModal({
           style={{
             marginTop: 18,
             border: '0.8px solid var(--line)',
-            maxHeight: 340,
-            overflowY: 'auto',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
           }}
         >
+          {/* Pinned header — stays fixed while permission sections scroll below */}
           <div
             style={{
               display: 'flex',
@@ -111,105 +117,143 @@ export function PermissionGroupModal({
               fontSize: 12,
               fontWeight: 700,
               color: 'var(--muted)',
+              flexShrink: 0,
             }}
           >
             <span>ASSIGNED PERMISSIONS</span>
-            <span>{selectedCodes.length} selected</span>
+            <span>
+              {isOwnerGroup
+                ? `All ${totalKnownCount} permissions (Owner)`
+                : `${selectedCodes.length} selected`}
+            </span>
           </div>
-          {PERMISSION_MODULES.map((mod) => (
-            <div
-              key={mod.module}
-              style={{
-                padding: '12px 14px',
-                borderBottom: '0.8px solid var(--line)',
-              }}
-            >
-              <div
-                style={{
-                  fontSize: 12.5,
-                  fontWeight: 700,
-                  color: 'var(--ink)',
-                  marginBottom: 8,
-                }}
-              >
-                {mod.module}
-              </div>
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(195px, 1fr))',
-                  gap: 8,
-                }}
-              >
-                {mod.permissions.map((p) => (
+
+          <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+            {PERMISSION_MODULES.map((mod) => {
+              const modCodes = mod.permissions.map((p) => p.code);
+              const checkedCount = isOwnerGroup
+                ? modCodes.length
+                : modCodes.filter((c) => selectedCodes.includes(c)).length;
+              const allChecked = checkedCount === modCodes.length && modCodes.length > 0;
+              const someChecked = checkedCount > 0 && checkedCount < modCodes.length;
+
+              return (
+                <div
+                  key={mod.module}
+                  style={{
+                    padding: '12px 14px',
+                    borderBottom: '0.8px solid var(--line)',
+                  }}
+                >
                   <label
-                    key={p.code}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
+                      justifyContent: 'space-between',
                       gap: 8,
                       fontSize: 12.5,
-                      color: 'var(--ink-body)',
-                      cursor: 'pointer',
+                      fontWeight: 700,
+                      color: 'var(--ink)',
+                      marginBottom: 8,
+                      cursor: isOwnerGroup ? 'default' : 'pointer',
                     }}
                   >
-                    <input
-                      type="checkbox"
-                      disabled={isOwnerGroup}
-                      checked={selectedCodes.includes(p.code)}
-                      onChange={() => onToggleCode(p.code)}
-                    />
-                    <span>{p.label}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          ))}
-          {selectedCodes.some((c) => !KNOWN_PERMISSION_CODES.has(c)) && (
-            <div style={{ padding: '12px 14px' }}>
-              <div
-                style={{
-                  fontSize: 12.5,
-                  fontWeight: 700,
-                  color: 'var(--ink)',
-                  marginBottom: 8,
-                }}
-              >
-                Other / Legacy Permissions
-              </div>
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(195px, 1fr))',
-                  gap: 8,
-                }}
-              >
-                {selectedCodes
-                  .filter((c) => !KNOWN_PERMISSION_CODES.has(c))
-                  .map((code) => (
-                    <label
-                      key={code}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        fontSize: 12.5,
-                        color: 'var(--ink-body)',
-                        cursor: 'pointer',
-                      }}
-                    >
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                       <input
                         type="checkbox"
                         disabled={isOwnerGroup}
-                        checked
-                        onChange={() => onToggleCode(code)}
+                        checked={allChecked}
+                        ref={(el) => {
+                          if (el) el.indeterminate = someChecked;
+                        }}
+                        onChange={() => onToggleSection(modCodes)}
+                        aria-label={`Select all permissions in ${mod.module}`}
                       />
-                      <span>{code}</span>
-                    </label>
-                  ))}
+                      <span>{mod.module}</span>
+                    </span>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--muted)' }}>
+                      {checkedCount}/{modCodes.length}
+                    </span>
+                  </label>
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fill, minmax(195px, 1fr))',
+                      gap: 8,
+                      paddingLeft: 22,
+                    }}
+                  >
+                    {mod.permissions.map((p) => (
+                      <label
+                        key={p.code}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          fontSize: 12.5,
+                          color: 'var(--ink-body)',
+                          cursor: isOwnerGroup ? 'default' : 'pointer',
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          disabled={isOwnerGroup}
+                          checked={isOwnerGroup || selectedCodes.includes(p.code)}
+                          onChange={() => onToggleCode(p.code)}
+                        />
+                        <span>{p.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+            {!isOwnerGroup && selectedCodes.some((c) => !KNOWN_PERMISSION_CODES.has(c)) && (
+              <div style={{ padding: '12px 14px' }}>
+                <div
+                  style={{
+                    fontSize: 12.5,
+                    fontWeight: 700,
+                    color: 'var(--ink)',
+                    marginBottom: 8,
+                  }}
+                >
+                  Other / Legacy Permissions
+                </div>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(195px, 1fr))',
+                    gap: 8,
+                  }}
+                >
+                  {selectedCodes
+                    .filter((c) => !KNOWN_PERMISSION_CODES.has(c))
+                    .map((code) => (
+                      <label
+                        key={code}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          fontSize: 12.5,
+                          color: 'var(--ink-body)',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          disabled={isOwnerGroup}
+                          checked
+                          onChange={() => onToggleCode(code)}
+                        />
+                        <span>{code}</span>
+                      </label>
+                    ))}
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
         <div className="request-info-banner" style={{ marginTop: 18 }}>

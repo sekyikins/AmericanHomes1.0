@@ -34,11 +34,13 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react
 type CollectionRow = {
   id: string;
   reference: string;
+  gatePassCode?: string;
   orderId: string;
   customer: string;
   source: 'Online' | 'Walk-in';
   product: string;
   collectorName: string;
+  collectorPhone?: string;
   collectionStatus: string;
   collectionTone: 'green' | 'amber' | 'blue';
   date: string;
@@ -76,6 +78,11 @@ export default function StaffCollectionsPage() {
   const [selectedOrderId, setSelectedOrderId] = useState('');
   const [collectorName, setCollectorName] = useState('');
   const [collectorId, setCollectorId] = useState('');
+  const [fulfilmentMode, setFulfilmentMode] = useState('SELF_COLLECTION');
+  const [vehiclePlate, setVehiclePlate] = useState('');
+  const [releasePin, setReleasePin] = useState('');
+  const [sendingPin, setSendingPin] = useState(false);
+  const [sentPinHint, setSentPinHint] = useState<string | null>(null);
   const [notes, setNotes] = useState('');
   const [unpaidApproved, setUnpaidApproved] = useState(false);
 
@@ -127,10 +134,14 @@ export default function StaffCollectionsPage() {
             String(order?.reference || `COL-${String(c.id).slice(-6).toUpperCase()}`),
             'ORD',
           ),
+          gatePassCode: c.gatePassCode
+            ? String(c.gatePassCode)
+            : `AH-GP-${new Date().getFullYear()}-${String(c.id).slice(-6).toUpperCase()}`,
           customer: order?.customer?.user?.name || order?.customer?.user?.phone || 'Customer',
           source: String(order?.source ?? 'ONLINE').toUpperCase() === 'WALK_IN' ? 'Walk-in' : 'Online',
           product: String(c.notes || 'Warehouse handover'),
           collectorName: String(c.representativeName || c.collectorName || 'Customer'),
+          collectorPhone: c.representativePhone ? String(c.representativePhone) : undefined,
           collectionStatus: status,
           collectionTone: status === 'COLLECTED' ? 'green' : status === 'PARTIAL' ? 'blue' : 'amber',
           date: c.collectedAt ? new Date(String(c.collectedAt)).toLocaleDateString('en-GH') : 'Recent',
@@ -239,6 +250,24 @@ export default function StaffCollectionsPage() {
   const needsUnpaidApproval =
     selectedOrderOpt !== undefined && selectedOrderOpt.paymentStatus !== 'PAID';
 
+  const handleSendReleasePin = async () => {
+    if (!selectedOrderId || sendingPin) return;
+    setSendingPin(true);
+    setSentPinHint(null);
+    try {
+      const res = await collectionsApi.sendReleasePin(selectedOrderId);
+      const hint = res.devPin
+        ? `Release PIN sent to ${res.maskedPhone} (Verification PIN: ${res.devPin})`
+        : `6-digit release PIN sent to ${res.maskedPhone}`;
+      setSentPinHint(hint);
+      showToast(hint, 'success');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Unable to send release PIN', 'error');
+    } finally {
+      setSendingPin(false);
+    }
+  };
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (submitting || !selectedOrderId) return;
@@ -251,21 +280,33 @@ export default function StaffCollectionsPage() {
     }
     setSubmitting(true);
     try {
-      await collectionsApi.record({
+      const created = (await collectionsApi.record({
         orderId: selectedOrderId,
         representativeName: collectorName.trim() || undefined,
         representativePhone: collectorId.trim() || undefined,
+        representativeOtpVerified: Boolean(collectorName.trim()),
+        fulfilmentMode,
+        ...(vehiclePlate.trim() ? { vehiclePlate: vehiclePlate.trim() } : {}),
+        ...(releasePin.trim() ? { releasePin: releasePin.trim() } : {}),
         ...(needsUnpaidApproval && (user?.isOwner || unpaidApproved)
           ? { unpaidExceptionApprovedBy: user?.id }
           : {}),
         notes: notes.trim() || undefined,
-      });
+      })) as { gatePassCode?: string } | null;
       setModalOpen(false);
       setCollectorName('');
       setCollectorId('');
+      setVehiclePlate('');
+      setReleasePin('');
+      setSentPinHint(null);
       setNotes('');
       setUnpaidApproved(false);
-      showToast('Collection handover recorded', 'success');
+      showToast(
+        created?.gatePassCode
+          ? `Collection recorded · Gate Pass ${created.gatePassCode} issued & inventory consumed`
+          : 'Collection handover recorded and Gate Pass issued',
+        'success',
+      );
       await loadData(true);
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to record collection', 'error');
@@ -453,12 +494,25 @@ export default function StaffCollectionsPage() {
         unpaidApproved={unpaidApproved}
         collectorName={collectorName}
         collectorId={collectorId}
+        fulfilmentMode={fulfilmentMode}
+        vehiclePlate={vehiclePlate}
+        releasePin={releasePin}
+        sendingPin={sendingPin}
+        sentPinHint={sentPinHint}
         notes={notes}
         submitting={submitting}
-        onOrderChange={setSelectedOrderId}
+        onOrderChange={(val) => {
+          setSelectedOrderId(val);
+          setSentPinHint(null);
+          setReleasePin('');
+        }}
         onUnpaidApprovedChange={setUnpaidApproved}
         onCollectorNameChange={setCollectorName}
         onCollectorIdChange={setCollectorId}
+        onFulfilmentModeChange={setFulfilmentMode}
+        onVehiclePlateChange={setVehiclePlate}
+        onReleasePinChange={setReleasePin}
+        onSendReleasePin={handleSendReleasePin}
         onNotesChange={setNotes}
         onSubmit={handleSubmit}
         onClose={() => setModalOpen(false)}

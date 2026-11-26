@@ -7,6 +7,7 @@ import {
 import { paginationParams } from '../../common/utils/pagination';
 import { PrismaService } from '../../database/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { ProductQueryDto } from './dto/product-query.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
@@ -61,6 +62,7 @@ export class CatalogueService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   getPublishedProducts(query: ProductQueryDto) {
@@ -84,40 +86,131 @@ export class CatalogueService {
   }
 
   async getAllProductsAdmin(query: ProductQueryDto) {
-    const rows = await this.prisma.product.findMany({
-      ...paginationParams(query),
-      where: {
-        ...(query.category ? { category: query.category } : {}),
-        ...(query.search ? { name: { contains: query.search, mode: 'insensitive' } } : {}),
-      },
-      include: {
-        variants: {
-          include: {
-            stockLots: true,
-            attributes: { include: { attribute: true } },
+    const [rows, shipments] = await Promise.all([
+      this.prisma.product.findMany({
+        ...paginationParams(query),
+        where: {
+          ...(query.category ? { category: query.category } : {}),
+          ...(query.search ? { name: { contains: query.search, mode: 'insensitive' } } : {}),
+        },
+        include: {
+          variants: {
+            include: {
+              stockLots: true,
+              attributes: { include: { attribute: true } },
+            },
+          },
+          preparationSteps: true,
+          media: { orderBy: { position: 'asc' } },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.shipment.findMany({
+        select: {
+          id: true,
+          reference: true,
+          expenses: { select: { amountCents: true } },
+          manifestRevisions: {
+            orderBy: { revision: 'desc' },
+            take: 1,
+            select: {
+              items: {
+                select: {
+                  variantId: true,
+                  productName: true,
+                  quantity: true,
+                  unitCostCents: true,
+                },
+              },
+            },
           },
         },
-        preparationSteps: true,
-        media: { orderBy: { position: 'asc' } },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+
+    const shipmentByIdOrRef = new Map<
+      string,
+      (typeof shipments)[number] & { allocatedExpensePerUnitCents: number }
+    >();
+    const manifestCostByVariantId = new Map<
+      string,
+      { shipmentRef: string; unitCostCents: number; allocatedExpensePerUnitCents: number }
+    >();
+    const manifestCostByProductName = new Map<
+      string,
+      { shipmentRef: string; unitCostCents: number; allocatedExpensePerUnitCents: number }
+    >();
+
+    for (const shp of shipments) {
+      const items = shp.manifestRevisions[0]?.items ?? [];
+      const totalExp = shp.expenses.reduce((s, e) => s + e.amountCents, 0);
+      const totalUnits = Math.max(
+        1,
+        items.reduce((s, i) => s + i.quantity, 0),
+      );
+      const totalManifestFobCents = items.reduce(
+        (s, i) => s + Math.max(0, i.unitCostCents) * Math.max(1, i.quantity),
+        0,
+      );
+      const allocatedExpensePerUnitCents = Math.round(totalExp / totalUnits);
+      const enriched = { ...shp, allocatedExpensePerUnitCents };
+      shipmentByIdOrRef.set(shp.id, enriched);
+      shipmentByIdOrRef.set(shp.reference, enriched);
+
+      for (const item of items) {
+        // Allocate container freight, customs duty & clearing proportionally by FOB Cost Share when unit costs are present
+        const lineFobCents = Math.max(0, item.unitCostCents) * Math.max(1, item.quantity);
+        const itemAllocatedExpensePerUnitCents =
+          totalManifestFobCents > 0 && item.unitCostCents > 0
+            ? Math.round((totalExp * (lineFobCents / totalManifestFobCents)) / Math.max(1, item.quantity))
+            : allocatedExpensePerUnitCents;
+
+        const entry = {
+          shipmentRef: shp.reference,
+          unitCostCents: item.unitCostCents,
+          allocatedExpensePerUnitCents: itemAllocatedExpensePerUnitCents,
+        };
+        if (item.variantId && !manifestCostByVariantId.has(item.variantId)) {
+          manifestCostByVariantId.set(item.variantId, entry);
+        }
+        const keyName = item.productName.trim().toLowerCase();
+        if (keyName && !manifestCostByProductName.has(keyName)) {
+          manifestCostByProductName.set(keyName, entry);
+        }
+      }
+    }
+
+    // Repair any inconsistent prep steps or unpublished available lots in the background
+    // so GET /catalogue/admin/products never blocks on sequential write-on-read round-trips.
+    const backgroundRepairs: Array<Promise<unknown>> = [];
     for (const r of rows) {
       if (r.isPublished) {
         const stepNames = new Set((r.preparationSteps ?? []).map((s) => s.step));
         for (const reqStep of ['PRICING', 'FINAL_REVIEW'] as const) {
           if (!stepNames.has(reqStep)) {
-            const createdStep = await this.prisma.productPreparationRecord.upsert({
-              where: { productId_step: { productId: r.id, step: reqStep } },
-              update: { status: 'COMPLETED' },
-              create: {
-                productId: r.id,
-                step: reqStep,
-                status: 'COMPLETED',
-                completedAt: new Date(),
-              },
+            const now = new Date();
+            r.preparationSteps.push({
+              id: `pending-${r.id}-${reqStep}`,
+              productId: r.id,
+              step: reqStep,
+              status: 'COMPLETED',
+              completedBy: null,
+              completedAt: now,
+              notes: null,
             });
-            r.preparationSteps.push(createdStep);
+            backgroundRepairs.push(
+              this.prisma.productPreparationRecord.upsert({
+                where: { productId_step: { productId: r.id, step: reqStep } },
+                update: { status: 'COMPLETED' },
+                create: {
+                  productId: r.id,
+                  step: reqStep,
+                  status: 'COMPLETED',
+                  completedAt: now,
+                },
+              }),
+            );
           }
         }
       } else {
@@ -125,25 +218,54 @@ export class CatalogueService {
           for (const lot of v.stockLots) {
             if (lot.available > 0) {
               const moved = lot.available;
-              await this.prisma.stockLot.update({
-                where: { id: lot.id },
-                data: {
-                  available: 0,
-                  unavailable: { increment: moved },
-                },
-              });
               lot.unavailable += moved;
               lot.available = 0;
+              backgroundRepairs.push(
+                this.prisma.stockLot.update({
+                  where: { id: lot.id },
+                  data: {
+                    available: 0,
+                    unavailable: { increment: moved },
+                  },
+                }),
+              );
             }
           }
         }
       }
     }
-    return rows.map((r) => ({
-      ...r,
-      completedStageCount: deriveCompletedStageCount(r),
-      preparationStatus: derivePreparationStatus(r),
-    }));
+    if (backgroundRepairs.length > 0) {
+      void Promise.allSettled(backgroundRepairs);
+    }
+
+    return rows.map((r) => {
+      const firstVariantId = r.variants[0]?.id;
+      const matchedManifest =
+        (firstVariantId ? manifestCostByVariantId.get(firstVariantId) : undefined) ??
+        manifestCostByProductName.get(r.name.trim().toLowerCase());
+      const matchedShipment = r.shipmentId ? shipmentByIdOrRef.get(r.shipmentId) : undefined;
+
+      const shipmentReference =
+        matchedShipment?.reference ??
+        matchedManifest?.shipmentRef ??
+        (r.shipmentId || 'Warehouse');
+      const unitAcquisitionCostCents = matchedManifest?.unitCostCents ?? 0;
+      const allocatedFreightAndDutyCents =
+        matchedManifest?.allocatedExpensePerUnitCents ??
+        matchedShipment?.allocatedExpensePerUnitCents ??
+        0;
+      const estimatedLandedCostCents = unitAcquisitionCostCents + allocatedFreightAndDutyCents;
+
+      return {
+        ...r,
+        shipmentReference,
+        unitAcquisitionCostCents,
+        allocatedFreightAndDutyCents,
+        estimatedLandedCostCents,
+        completedStageCount: deriveCompletedStageCount(r),
+        preparationStatus: derivePreparationStatus(r),
+      };
+    });
   }
 
   async getProductById(id: string) {
@@ -168,13 +290,26 @@ export class CatalogueService {
     };
   }
 
-  async createProduct(dto: CreateProductDto, staffId?: string) {
+  async createProduct(
+    dto: CreateProductDto & {
+      initialVariantName?: string;
+      initialAttributes?: Record<string, string>;
+    },
+    staffId?: string,
+  ) {
     const skuBase = dto.name
       .replace(/[^a-zA-Z0-9]/g, '')
       .toUpperCase()
       .slice(0, 6) || 'ITEM';
     const sku = `AH-${skuBase}-${Date.now().toString().slice(-4)}`;
     const initialQty = Math.max(1, dto.initialQuantity ?? 1);
+    const attrEntries = Object.entries(dto.initialAttributes ?? {})
+      .map(([k, v]) => [k.trim(), String(v).trim()] as const)
+      .filter(([k, v]) => Boolean(k && v));
+    const derivedVariantName =
+      dto.initialVariantName?.trim() ||
+      (attrEntries.length > 0 ? attrEntries.map(([, v]) => v).join(' / ') : 'Standard');
+
     const created = await this.prisma.product.create({
       data: {
         name: dto.name,
@@ -191,7 +326,7 @@ export class CatalogueService {
         variants: {
           create: {
             sku,
-            name: 'Standard',
+            name: derivedVariantName,
             priceCents: 0,
             stockLots: {
               create: {
@@ -206,11 +341,25 @@ export class CatalogueService {
         },
       },
       include: {
-        variants: { include: { stockLots: true } },
+        variants: { include: { stockLots: true, attributes: { include: { attribute: true } } } },
         media: { orderBy: { position: 'asc' } },
         preparationSteps: true,
       },
     });
+
+    const firstVariant = created.variants[0];
+    if (firstVariant && attrEntries.length > 0) {
+      for (const [attrName, attrValue] of attrEntries) {
+        const attr = await this.prisma.productAttribute.upsert({
+          where: { name: attrName },
+          update: {},
+          create: { name: attrName },
+        });
+        await this.prisma.productVariantAttribute.create({
+          data: { variantId: firstVariant.id, attributeId: attr.id, value: attrValue },
+        });
+      }
+    }
 
     const firstLot = created.variants[0]?.stockLots[0];
     if (firstLot) {
@@ -362,32 +511,88 @@ export class CatalogueService {
 
   async createVariant(
     productId: string,
-    dto: { sku?: string; name?: string; priceCents: number; attributes?: Record<string, string> },
+    dto: {
+      sku?: string;
+      name?: string;
+      priceCents: number;
+      initialQuantity?: number;
+      attributes?: Record<string, string>;
+    },
+    staffId?: string,
   ) {
     const product = await this.prisma.product.findUnique({ where: { id: productId } });
     if (!product) throw new NotFoundException(`Product ${productId} not found`);
-    const sku = dto.sku ?? `AH-${productId.slice(-5).toUpperCase()}-${Date.now().toString().slice(-4)}`;
+
+    const attrEntries = Object.entries(dto.attributes ?? {})
+      .map(([k, v]) => [k.trim(), String(v).trim()] as const)
+      .filter(([k, v]) => Boolean(k && v));
+    const derivedName =
+      dto.name?.trim() ||
+      (attrEntries.length > 0 ? attrEntries.map(([, v]) => v).join(' / ') : 'Standard');
+    const sku = dto.sku?.trim() || `AH-${productId.slice(-5).toUpperCase()}-${Date.now().toString().slice(-4)}`;
+    const initialQty = Math.max(1, Math.round(dto.initialQuantity ?? 1));
 
     const variant = await this.prisma.productVariant.create({
-      data: { productId, sku, name: dto.name, priceCents: dto.priceCents },
+      data: {
+        productId,
+        sku,
+        name: derivedName,
+        priceCents: Math.max(0, Math.round(dto.priceCents ?? 0)),
+        stockLots: {
+          create: {
+            quantity: initialQty,
+            available: product.isPublished ? initialQty : 0,
+            held: 0,
+            unavailable: product.isPublished ? 0 : initialQty,
+            condition: product.condition ?? 'GOOD',
+          },
+        },
+      },
+      include: { stockLots: true },
     });
 
-    if (dto.attributes) {
-      for (const [attrName, attrValue] of Object.entries(dto.attributes)) {
-        const attr = await this.prisma.productAttribute.upsert({
-          where: { name: attrName },
-          update: {},
-          create: { name: attrName },
-        });
-        await this.prisma.productVariantAttribute.create({
-          data: { variantId: variant.id, attributeId: attr.id, value: attrValue },
-        });
-      }
+    for (const [attrName, attrValue] of attrEntries) {
+      const attr = await this.prisma.productAttribute.upsert({
+        where: { name: attrName },
+        update: {},
+        create: { name: attrName },
+      });
+      await this.prisma.productVariantAttribute.create({
+        data: { variantId: variant.id, attributeId: attr.id, value: attrValue },
+      });
     }
+
+    if (variant.stockLots[0]) {
+      await this.prisma.inventoryMovement.create({
+        data: {
+          lotId: variant.stockLots[0].id,
+          quantity: initialQty,
+          reason: product.isPublished ? 'VARIANT_CREATED_AVAILABLE' : 'VARIANT_CREATED_UNAVAILABLE',
+          referenceType: 'PRODUCT_VARIANT',
+          referenceId: variant.id,
+          actorId: staffId,
+        },
+      });
+    }
+
+    await this.audit.record({
+      actorId: staffId,
+      action: 'PRODUCT_VARIANT_CREATED',
+      entityType: 'ProductVariant',
+      entityId: variant.id,
+      after: {
+        productId,
+        sku,
+        name: derivedName,
+        priceCents: variant.priceCents,
+        initialQty,
+        attributes: dto.attributes,
+      },
+    });
 
     return this.prisma.productVariant.findUnique({
       where: { id: variant.id },
-      include: { attributes: { include: { attribute: true } } },
+      include: { attributes: { include: { attribute: true } }, stockLots: true },
     });
   }
 
@@ -616,48 +821,168 @@ export class CatalogueService {
       );
     }
 
-    const approval = await this.prisma.pricingApproval.create({
-      data: {
-        variantId,
-        previousPriceCents: variant.priceCents,
-        proposedPriceCents: dto.proposedPriceCents,
-        reason: dto.reason,
-        comparableRef: dto.comparableRef,
-        notes: dto.notes,
-        initiatedBy: staffId,
-        status: 'PENDING',
-      },
-    });
-    await this.prisma.productVariant.update({
-      where: { id: variantId },
-      data: { priceCents: dto.proposedPriceCents },
-    });
-    await this.prisma.productPreparationRecord.upsert({
-      where: { productId_step: { productId: variant.productId, step: 'PRICING' } },
-      update: {
-        status: 'COMPLETED',
-        completedBy: staffId,
-        completedAt: new Date(),
-        notes: dto.reason ?? dto.notes ?? 'Initial retail pricing',
-      },
-      create: {
-        productId: variant.productId,
-        step: 'PRICING',
-        status: 'COMPLETED',
-        completedBy: staffId,
-        completedAt: new Date(),
-        notes: dto.reason ?? dto.notes ?? 'Initial retail pricing',
-      },
-    });
-    await this.audit.record({
-      actorId: staffId,
-      action: 'PRICE_PROPOSED',
-      entityType: 'PricingApproval',
-      entityId: approval.id,
-      before: { priceCents: variant.priceCents },
-      after: { proposedPriceCents: dto.proposedPriceCents, reason: dto.reason },
-    });
+    // Dual-control safeguard: If the product is already live/published on the storefront with an active price,
+    // keep the existing approved storefront price until a second manager approves the PricingApproval.
+    const isInitialDraftPricing = !variant.product?.isPublished || variant.priceCents <= 0;
+    const now = new Date();
+    const [approval] = await Promise.all([
+      this.prisma.pricingApproval.create({
+        data: {
+          variantId,
+          previousPriceCents: variant.priceCents,
+          proposedPriceCents: dto.proposedPriceCents,
+          reason: dto.reason,
+          comparableRef: dto.comparableRef,
+          notes: dto.notes,
+          initiatedBy: staffId,
+          status: 'PENDING',
+        },
+      }),
+      isInitialDraftPricing
+        ? this.prisma.productVariant.update({
+            where: { id: variantId },
+            data: { priceCents: dto.proposedPriceCents },
+          })
+        : Promise.resolve(null),
+      this.prisma.productPreparationRecord.upsert({
+        where: { productId_step: { productId: variant.productId, step: 'PRICING' } },
+        update: {
+          status: 'COMPLETED',
+          completedBy: staffId,
+          completedAt: now,
+          notes: dto.reason ?? dto.notes ?? 'Initial retail pricing',
+        },
+        create: {
+          productId: variant.productId,
+          step: 'PRICING',
+          status: 'COMPLETED',
+          completedBy: staffId,
+          completedAt: now,
+          notes: dto.reason ?? dto.notes ?? 'Initial retail pricing',
+        },
+      }),
+    ]);
+
+    void this.audit
+      .record({
+        actorId: staffId,
+        action: 'PRICE_PROPOSED',
+        entityType: 'PricingApproval',
+        entityId: approval.id,
+        before: { priceCents: variant.priceCents },
+        after: {
+          proposedPriceCents: dto.proposedPriceCents,
+          reason: dto.reason,
+          appliedImmediatelyToDraft: isInitialDraftPricing,
+        },
+      })
+      .catch(() => null);
     return approval;
+  }
+
+  async listPriceApprovals(status?: string) {
+    const approvals = await this.prisma.pricingApproval.findMany({
+      where: status ? { status } : undefined,
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+    const variantIds = Array.from(new Set(approvals.map((a) => a.variantId)));
+    const variants = variantIds.length
+      ? await this.prisma.productVariant.findMany({
+          where: { id: { in: variantIds } },
+          include: { product: { select: { id: true, name: true, category: true, isPublished: true } } },
+        })
+      : [];
+    const variantMap = new Map(variants.map((v) => [v.id, v]));
+    return approvals.map((a) => ({
+      ...a,
+      variant: variantMap.get(a.variantId) ?? null,
+    }));
+  }
+
+  private async notifyWishlistAndPollCustomers(
+    productId: string,
+    productName: string,
+    eventType: 'PRICE_DROP' | 'PUBLISHED',
+    details?: { previousPriceCents?: number; newPriceCents?: number },
+  ) {
+    try {
+      const wishlistRows = await this.prisma.systemSetting.findMany({
+        where: { key: { startsWith: 'WISHLIST:' } },
+      });
+      const notifiedUserIds = new Set<string>();
+
+      for (const row of wishlistRows) {
+        const userId = row.key.replace('WISHLIST:', '').trim();
+        if (!userId) continue;
+        try {
+          const parsed = JSON.parse(row.value);
+          if (!Array.isArray(parsed)) continue;
+          const hasProduct = parsed.some((item) => item && item.productId === productId);
+          if (!hasProduct) continue;
+
+          notifiedUserIds.add(userId);
+          if (eventType === 'PRICE_DROP' && details?.newPriceCents && details?.previousPriceCents) {
+            const dropGhs = ((details.previousPriceCents - details.newPriceCents) / 100).toLocaleString();
+            const newGhs = (details.newPriceCents / 100).toLocaleString();
+            await this.prisma.notificationMessage.create({
+              data: {
+                userId,
+                type: 'PROMOTIONS',
+                referenceId: productId,
+                title: `Price dropped on "${productName}"!`,
+                body: `Good news! An item in your Saved Wishlist ("${productName}") dropped by GHS ${dropGhs} and is now GHS ${newGhs}.`,
+              },
+            });
+          } else if (eventType === 'PUBLISHED') {
+            await this.prisma.notificationMessage.create({
+              data: {
+                userId,
+                type: 'AVAILABILITY',
+                referenceId: productId,
+                title: `"${productName}" is now available!`,
+                body: `Your saved item "${productName}" has completed preparation and is now available for order or reservation.`,
+              },
+            });
+          }
+        } catch {
+          // ignore malformed row
+        }
+      }
+
+      if (eventType === 'PUBLISHED') {
+        const matchingPolls = await this.prisma.productPoll.findMany({
+          where: {
+            title: { contains: productName.split(' ').slice(0, 2).join(' '), mode: 'insensitive' },
+          },
+          include: {
+            votes: {
+              where: { choice: 'YES' },
+              include: { customer: { select: { userId: true } } },
+            },
+          },
+        });
+        for (const poll of matchingPolls) {
+          for (const vote of poll.votes) {
+            const voterUserId = vote.customer?.userId;
+            if (voterUserId && !notifiedUserIds.has(voterUserId)) {
+              notifiedUserIds.add(voterUserId);
+              await this.prisma.notificationMessage.create({
+                data: {
+                  userId: voterUserId,
+                  type: 'AVAILABILITY',
+                  referenceId: productId,
+                  title: `Poll winner "${productName}" has arrived!`,
+                  body: `You voted YES for "${poll.title}" — "${productName}" is now prepared, published, and available in the storefront.`,
+                },
+              });
+            }
+          }
+        }
+      }
+    } catch {
+      // Non-blocking notification fan-out
+    }
   }
 
   async approvePrice(approvalId: string, staffId: string, isOwner = false) {
@@ -685,11 +1010,30 @@ export class CatalogueService {
       after: { priceCents: approval.proposedPriceCents },
     });
 
-    // If all physical preparation steps are already completed, automatically publish the prepared product
     const parentProduct = await this.prisma.product.findUnique({
       where: { id: variant.productId },
       include: { preparationSteps: true },
     });
+
+    // If this approval is a markdown/price-drop, automatically alert all customers who saved this product in their Wishlist
+    if (
+      parentProduct &&
+      approval.previousPriceCents &&
+      approval.previousPriceCents > 0 &&
+      approval.proposedPriceCents < approval.previousPriceCents
+    ) {
+      await this.notifyWishlistAndPollCustomers(
+        parentProduct.id,
+        parentProduct.name,
+        'PRICE_DROP',
+        {
+          previousPriceCents: approval.previousPriceCents,
+          newPriceCents: approval.proposedPriceCents,
+        },
+      );
+    }
+
+    // If all physical preparation steps are already completed, automatically publish the prepared product
     if (parentProduct && !parentProduct.isPublished) {
       const doneSteps = new Set(
         parentProduct.preparationSteps.filter((s) => s.status === 'COMPLETED').map((s) => s.step),
@@ -700,6 +1044,42 @@ export class CatalogueService {
       }
     }
 
+    return updated;
+  }
+
+  async rejectPrice(approvalId: string, staffId: string, notes?: string) {
+    const approval = await this.prisma.pricingApproval.findUnique({ where: { id: approvalId } });
+    if (!approval) throw new NotFoundException(`PricingApproval ${approvalId} not found`);
+    if (approval.status !== 'PENDING') {
+      throw new BadRequestException(`PricingApproval is already ${approval.status}`);
+    }
+
+    // Restore previous price if variant was modified during draft stage
+    if (typeof approval.previousPriceCents === 'number' && approval.previousPriceCents >= 0) {
+      await this.prisma.productVariant.update({
+        where: { id: approval.variantId },
+        data: { priceCents: approval.previousPriceCents },
+      });
+    }
+
+    const updated = await this.prisma.pricingApproval.update({
+      where: { id: approvalId },
+      data: {
+        status: 'REJECTED',
+        approvedBy: staffId,
+        notes: notes ?? approval.notes,
+        resolvedAt: new Date(),
+      },
+    });
+    await this.audit.record({
+      actorId: staffId,
+      approverId: staffId,
+      action: 'PRICE_REJECTED',
+      entityType: 'PricingApproval',
+      entityId: approvalId,
+      before: { proposedPriceCents: approval.proposedPriceCents },
+      after: { status: 'REJECTED', restoredPriceCents: approval.previousPriceCents, notes },
+    });
     return updated;
   }
 
@@ -847,6 +1227,91 @@ export class CatalogueService {
       entityId: id,
       after: { isPublished: true, availableStock: totalAvailable },
     });
+    await this.notifyWishlistAndPollCustomers(id, product.name, 'PUBLISHED');
+    return updated;
+  }
+
+  // --- Serialized / Individual Tracked Units (Appliances, Electronics & Open-Box Scratch-and-Dent) ---
+  async listTrackedUnits(productId: string) {
+    const product = await this.prisma.product.findUnique({
+      where: { id: productId },
+      include: { variants: true },
+    });
+    if (!product) throw new NotFoundException(`Product ${productId} not found`);
+    const variantIds = product.variants.map((v) => v.id);
+    return this.prisma.trackedUnit.findMany({
+      where: { variantId: { in: variantIds } },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async addTrackedUnit(
+    productId: string,
+    dto: {
+      unitCode?: string;
+      condition?: string;
+      defectNotes?: string;
+      status?: string;
+      lotId?: string;
+    },
+    staffId?: string,
+  ) {
+    const product = await this.prisma.product.findUnique({
+      where: { id: productId },
+      include: { variants: { include: { stockLots: true } } },
+    });
+    if (!product || product.variants.length === 0) {
+      throw new NotFoundException(`Product ${productId} or its variant not found`);
+    }
+    const primaryVariant = product.variants[0];
+    const primaryLot = dto.lotId ?? primaryVariant.stockLots[0]?.id;
+    const unitCode =
+      dto.unitCode?.trim() ||
+      `${primaryVariant.sku}-SN${Date.now().toString().slice(-5)}`;
+
+    const created = await this.prisma.trackedUnit.create({
+      data: {
+        variantId: primaryVariant.id,
+        lotId: primaryLot,
+        unitCode,
+        condition: dto.condition ?? product.condition ?? 'GOOD',
+        defectNotes: dto.defectNotes,
+        status: dto.status ?? (product.isPublished ? 'AVAILABLE' : 'UNAVAILABLE'),
+      },
+    });
+    await this.audit.record({
+      actorId: staffId,
+      action: 'TRACKED_UNIT_REGISTERED',
+      entityType: 'TrackedUnit',
+      entityId: created.id,
+      after: { productId, unitCode: created.unitCode, condition: created.condition },
+    });
+    return created;
+  }
+
+  async updateTrackedUnit(
+    unitId: string,
+    dto: { condition?: string; defectNotes?: string; status?: string },
+    staffId?: string,
+  ) {
+    const existing = await this.prisma.trackedUnit.findUnique({ where: { id: unitId } });
+    if (!existing) throw new NotFoundException(`TrackedUnit ${unitId} not found`);
+    const updated = await this.prisma.trackedUnit.update({
+      where: { id: unitId },
+      data: {
+        ...(dto.condition ? { condition: dto.condition } : {}),
+        ...(dto.defectNotes !== undefined ? { defectNotes: dto.defectNotes } : {}),
+        ...(dto.status ? { status: dto.status } : {}),
+      },
+    });
+    await this.audit.record({
+      actorId: staffId,
+      action: 'TRACKED_UNIT_UPDATED',
+      entityType: 'TrackedUnit',
+      entityId: unitId,
+      before: { condition: existing.condition, status: existing.status },
+      after: { condition: updated.condition, status: updated.status },
+    });
     return updated;
   }
 
@@ -913,5 +1378,212 @@ export class CatalogueService {
       after: { isPublished: false, reason: updated.unpublishReason },
     });
     return updated;
+  }
+
+  // --- Customer Wishlist / Saved Items (Guest-to-Account Hybrid Storage & Sync) ---
+  private wishlistSettingKey(userId: string): string {
+    return `WISHLIST:${userId}`;
+  }
+
+  private async readStoredWishlist(userId: string): Promise<
+    Array<{
+      productId: string;
+      variantId?: string | null;
+      priceAtSaveCents?: number;
+      addedAt: string;
+    }>
+  > {
+    const key = this.wishlistSettingKey(userId);
+    const row = await this.prisma.systemSetting.findUnique({ where: { key } });
+    if (!row || !row.value) return [];
+    try {
+      const parsed = JSON.parse(row.value);
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .filter((item) => item && typeof item.productId === 'string' && item.productId.trim())
+        .map((item) => ({
+          productId: String(item.productId).trim(),
+          variantId: item.variantId ? String(item.variantId) : null,
+          priceAtSaveCents:
+            typeof item.priceAtSaveCents === 'number' && Number.isFinite(item.priceAtSaveCents)
+              ? item.priceAtSaveCents
+              : undefined,
+          addedAt:
+            typeof item.addedAt === 'string' && item.addedAt
+              ? item.addedAt
+              : new Date().toISOString(),
+        }));
+    } catch {
+      return [];
+    }
+  }
+
+  private async writeStoredWishlist(
+    userId: string,
+    items: Array<{
+      productId: string;
+      variantId?: string | null;
+      priceAtSaveCents?: number;
+      addedAt: string;
+    }>,
+  ) {
+    const key = this.wishlistSettingKey(userId);
+    await this.prisma.systemSetting.upsert({
+      where: { key },
+      update: {
+        value: JSON.stringify(items),
+        updatedBy: userId,
+      },
+      create: {
+        key,
+        value: JSON.stringify(items),
+        description: `Saved wishlist items for user ${userId}`,
+        updatedBy: userId,
+      },
+    });
+  }
+
+  async getCustomerWishlist(userId: string) {
+    const stored = await this.readStoredWishlist(userId);
+    if (stored.length === 0) {
+      return { items: [], count: 0 };
+    }
+    const productIds = Array.from(new Set(stored.map((s) => s.productId)));
+    const products = await this.prisma.product.findMany({
+      where: { id: { in: productIds } },
+      include: {
+        variants: {
+          include: {
+            attributes: { include: { attribute: true } },
+            stockLots: { select: { available: true, held: true, unavailable: true } },
+          },
+        },
+        media: { orderBy: { position: 'asc' } },
+      },
+    });
+    const productMap = new Map(products.map((p) => [p.id, p]));
+    const validStored = stored.filter((s) => productMap.has(s.productId));
+    if (validStored.length !== stored.length) {
+      await this.writeStoredWishlist(userId, validStored);
+    }
+
+    const hydrated = validStored.map((s) => ({
+      ...s,
+      product: productMap.get(s.productId) ?? null,
+    }));
+    return {
+      items: hydrated,
+      count: hydrated.length,
+    };
+  }
+
+  async addCustomerWishlistItem(
+    userId: string,
+    dto: {
+      productId: string;
+      variantId?: string | null;
+      priceAtSaveCents?: number;
+      addedAt?: string;
+    },
+  ) {
+    if (!dto.productId || !dto.productId.trim()) {
+      throw new BadRequestException('productId is required');
+    }
+    const product = await this.prisma.product.findUnique({
+      where: { id: dto.productId },
+      include: { variants: true },
+    });
+    if (!product) {
+      throw new NotFoundException(`Product ${dto.productId} not found`);
+    }
+
+    const stored = await this.readStoredWishlist(userId);
+    const existingIdx = stored.findIndex((s) => s.productId === dto.productId);
+    const defaultPriceCents =
+      dto.priceAtSaveCents ?? product.variants[0]?.priceCents ?? undefined;
+    const entry = {
+      productId: product.id,
+      variantId: dto.variantId ?? product.variants[0]?.id ?? null,
+      priceAtSaveCents: defaultPriceCents,
+      addedAt: dto.addedAt ?? new Date().toISOString(),
+    };
+
+    if (existingIdx >= 0) {
+      stored[existingIdx] = {
+        ...stored[existingIdx],
+        variantId: entry.variantId ?? stored[existingIdx].variantId,
+        priceAtSaveCents: stored[existingIdx].priceAtSaveCents ?? entry.priceAtSaveCents,
+      };
+    } else {
+      stored.unshift(entry);
+    }
+
+    await this.writeStoredWishlist(userId, stored);
+    return this.getCustomerWishlist(userId);
+  }
+
+  async removeCustomerWishlistItem(userId: string, productId: string) {
+    const stored = await this.readStoredWishlist(userId);
+    const next = stored.filter((s) => s.productId !== productId);
+    if (next.length !== stored.length) {
+      await this.writeStoredWishlist(userId, next);
+    }
+    return this.getCustomerWishlist(userId);
+  }
+
+  async mergeCustomerWishlist(
+    userId: string,
+    guestItems: Array<{
+      productId: string;
+      variantId?: string | null;
+      priceAtSaveCents?: number;
+      addedAt?: string;
+    }>,
+  ) {
+    const stored = await this.readStoredWishlist(userId);
+    const existingIds = new Set(stored.map((s) => s.productId));
+    const candidateGuest = (Array.isArray(guestItems) ? guestItems : []).filter(
+      (g) => g && typeof g.productId === 'string' && g.productId.trim(),
+    );
+
+    if (candidateGuest.length === 0) {
+      const current = await this.getCustomerWishlist(userId);
+      return { ...current, mergedNewCount: 0 };
+    }
+
+    const candidateIds = Array.from(new Set(candidateGuest.map((g) => g.productId.trim())));
+    const validProducts = await this.prisma.product.findMany({
+      where: { id: { in: candidateIds } },
+      include: { variants: true },
+    });
+    const validMap = new Map(validProducts.map((p) => [p.id, p]));
+
+    let mergedNewCount = 0;
+    const merged = [...stored];
+    for (const guest of candidateGuest) {
+      const pid = guest.productId.trim();
+      const prod = validMap.get(pid);
+      if (!prod) continue;
+      if (!existingIds.has(pid)) {
+        existingIds.add(pid);
+        mergedNewCount++;
+        merged.unshift({
+          productId: pid,
+          variantId: guest.variantId ?? prod.variants[0]?.id ?? null,
+          priceAtSaveCents:
+            guest.priceAtSaveCents ?? prod.variants[0]?.priceCents ?? undefined,
+          addedAt: guest.addedAt ?? new Date().toISOString(),
+        });
+      }
+    }
+
+    if (mergedNewCount > 0) {
+      await this.writeStoredWishlist(userId, merged);
+    }
+    const hydrated = await this.getCustomerWishlist(userId);
+    return {
+      ...hydrated,
+      mergedNewCount,
+    };
   }
 }

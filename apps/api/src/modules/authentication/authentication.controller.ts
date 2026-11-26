@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Post, Res, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { Response } from 'express';
 import {
   AuthenticatedUser,
@@ -17,9 +18,10 @@ import {
 import { StaffLoginDto } from './dto/staff-login.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 
-function setSessionCookie(res: Response, token: string): void {
+function setSessionCookie(res: Response, token: string, role: 'STAFF' | 'CUSTOMER'): void {
   const isProduction = process.env.NODE_ENV === 'production';
-  res.cookie('ah_session', token, {
+  const cookieName = role === 'STAFF' ? 'ah_staff_session' : 'ah_customer_session';
+  res.cookie(cookieName, token, {
     httpOnly: true,
     sameSite: 'lax',
     secure: isProduction,
@@ -33,24 +35,27 @@ export class AuthenticationController {
   constructor(private readonly auth: AuthenticationService) {}
 
   @Post('request-otp')
+  @Throttle({ default: { ttl: 60_000, limit: 5 } })
   requestOtp(@Body() dto: RequestOtpDto) {
     return this.auth.requestOtp(dto);
   }
 
   @Post('verify-otp')
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
   async verifyOtp(@Body() dto: VerifyOtpDto, @Res({ passthrough: true }) res: Response) {
     const result = await this.auth.verifyOtp(dto);
     if (result.verified && result.token) {
-      setSessionCookie(res, result.token);
+      setSessionCookie(res, result.token, 'CUSTOMER');
     }
     return result;
   }
 
   @Post('staff-login')
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
   async staffLogin(@Body() dto: StaffLoginDto, @Res({ passthrough: true }) res: Response) {
     const result = await this.auth.staffLogin(dto);
     if (result.token) {
-      setSessionCookie(res, result.token);
+      setSessionCookie(res, result.token, 'STAFF');
     }
     return result;
   }
@@ -58,10 +63,13 @@ export class AuthenticationController {
   @Post('logout')
   logout(@Res({ passthrough: true }) res: Response) {
     res.clearCookie('ah_session', { path: '/' });
+    res.clearCookie('ah_staff_session', { path: '/' });
+    res.clearCookie('ah_customer_session', { path: '/' });
     return { loggedOut: true };
   }
 
   @Post('staff-reset-password/request')
+  @Throttle({ default: { ttl: 60_000, limit: 5 } })
   requestStaffPasswordReset(@Body() dto: RequestPasswordResetDto) {
     return this.auth.requestStaffPasswordReset(dto.email);
   }

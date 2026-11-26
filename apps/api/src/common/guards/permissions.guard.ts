@@ -15,6 +15,10 @@ const FINANCIAL_CODES = new Set([
   'expenses.view',
   'expenses.manage',
   'payments.view',
+  'tax.view',
+  'tax.manage',
+  'shifts.view',
+  'shifts.manage',
 ]);
 
 @Injectable()

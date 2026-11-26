@@ -19,6 +19,12 @@ export class SourcingController {
     return this.sourcing.findAll();
   }
 
+  @Get('recommendations')
+  @RequirePermission(PERMISSIONS.SHIPMENTS.VIEW)
+  getRecommendations() {
+    return this.sourcing.getDemandRecommendations();
+  }
+
   @Post('groups')
   @RequirePermission(PERMISSIONS.REQUESTS.MANAGE_SOURCING)
   createGroup(

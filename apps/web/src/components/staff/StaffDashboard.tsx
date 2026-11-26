@@ -57,6 +57,18 @@ type DashboardSummary = {
     bars7d: SalesBar[];
     bars30d: SalesBar[];
   } | null;
+  taxSummary?: {
+    evatMode: 'LIVE' | 'SANDBOX';
+    invoicesMtdCount: number;
+    clearedMtdCount: number;
+    creditNotesMtdCount: number;
+    failedEvatCount: number;
+    mtdNetSalesCents: number;
+    mtdVatCents: number;
+    mtdNhilCents: number;
+    mtdGetFundCents: number;
+    mtdTotalTaxCents: number;
+  } | null;
   activeShipment: {
     id: string;
     reference: string;
@@ -73,6 +85,7 @@ type DashboardSummary = {
     expiringReservationsCount: number;
     expiringReservationsValueCents: number;
     failedInspectionCount: number;
+    failedEvatCount?: number;
   };
 };
 
@@ -155,7 +168,8 @@ export function StaffDashboard() {
     approvals.length +
     (summary?.operationalAlerts.unexpectedHeldCount ?? 0) +
     (summary?.operationalAlerts.expiringReservationsCount ?? 0) +
-    (summary?.operationalAlerts.failedInspectionCount ?? 0);
+    (summary?.operationalAlerts.failedInspectionCount ?? 0) +
+    (summary?.operationalAlerts.failedEvatCount ?? 0);
 
   const bars =
     salesRange === '7d'
@@ -328,9 +342,11 @@ export function StaffDashboard() {
                   <h2>Pending approvals</h2>
                   <p>Actions requiring another user</p>
                 </div>
-                <Link href="/staff/audit-logs" className="link">
-                  View all
-                </Link>
+                {(user?.isOwner || user?.permissions?.includes('audit.view')) && (
+                  <Link href="/staff/audit-logs" className="link">
+                    View all
+                  </Link>
+                )}
               </div>
 
               {approvals.length === 0 ? (
@@ -370,6 +386,91 @@ export function StaffDashboard() {
             activeShipment={summary?.activeShipment}
             operationalAlerts={summary?.operationalAlerts}
           />
+
+          {summary?.taxSummary && (
+            <section className="acct-panel" style={{ marginTop: 18 }}>
+              <div className="acct-panel-head">
+                <div>
+                  <h2>Tax &amp; GRA E-VAT (Month to date)</h2>
+                  <p>
+                    Ghana VAT Act 2025 (Act 1151) · VAT 15%, NHIL 2.5%, GETFund 2.5% (net of credit notes)
+                  </p>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span
+                    className={`acct-pill ${summary.taxSummary.evatMode === 'LIVE' ? 'green' : 'amber'}`}
+                  >
+                    ● E-VAT {summary.taxSummary.evatMode}
+                  </span>
+                  <Link href="/staff/tax-invoices" className="link">
+                    Tax invoices
+                  </Link>
+                </div>
+              </div>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(175px, 1fr))',
+                  gap: 12,
+                  marginTop: 8,
+                }}
+              >
+                <div className="dash-metric-card" style={{ margin: 0 }}>
+                  <div className="dash-metric-head">
+                    <span>Total tax liability (MTD)</span>
+                  </div>
+                  <strong style={{ fontSize: 20 }}>
+                    {formatCurrency(summary.taxSummary.mtdTotalTaxCents)}
+                  </strong>
+                  <small>
+                    Net sales: {formatCurrency(summary.taxSummary.mtdNetSalesCents)}
+                  </small>
+                </div>
+
+                <div className="dash-metric-card" style={{ margin: 0 }}>
+                  <div className="dash-metric-head">
+                    <span>VAT (15%)</span>
+                  </div>
+                  <strong style={{ fontSize: 20 }}>
+                    {formatCurrency(summary.taxSummary.mtdVatCents)}
+                  </strong>
+                  <small>Output VAT payable</small>
+                </div>
+
+                <div className="dash-metric-card" style={{ margin: 0 }}>
+                  <div className="dash-metric-head">
+                    <span>NHIL (2.5%) &amp; GETFund (2.5%)</span>
+                  </div>
+                  <strong style={{ fontSize: 20 }}>
+                    {formatCurrency(
+                      summary.taxSummary.mtdNhilCents + summary.taxSummary.mtdGetFundCents,
+                    )}
+                  </strong>
+                  <small>
+                    NHIL {formatCurrency(summary.taxSummary.mtdNhilCents)} · GETFund{' '}
+                    {formatCurrency(summary.taxSummary.mtdGetFundCents)}
+                  </small>
+                </div>
+
+                <div className="dash-metric-card" style={{ margin: 0 }}>
+                  <div className="dash-metric-head">
+                    <span>GRA E-VAT clearance</span>
+                  </div>
+                  <strong style={{ fontSize: 20 }}>
+                    {summary.taxSummary.clearedMtdCount} / {summary.taxSummary.invoicesMtdCount}
+                  </strong>
+                  <small>
+                    {summary.taxSummary.creditNotesMtdCount} credit{' '}
+                    {summary.taxSummary.creditNotesMtdCount === 1 ? 'note' : 'notes'}
+                    {summary.taxSummary.failedEvatCount > 0
+                      ? ` · ${summary.taxSummary.failedEvatCount} failed`
+                      : ' · 0 failed'}
+                  </small>
+                </div>
+              </div>
+            </section>
+          )}
         </>
       )}
 

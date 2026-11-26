@@ -58,9 +58,17 @@ export class CatalogueController {
   @RequirePermission(PERMISSIONS.CATALOGUE.CREATE)
   createVariant(
     @Param('id') id: string,
-    @Body() dto: { sku?: string; name?: string; priceCents: number; attributes?: Record<string, string> },
+    @Body()
+    dto: {
+      sku?: string;
+      name?: string;
+      priceCents: number;
+      initialQuantity?: number;
+      attributes?: Record<string, string>;
+    },
+    @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.catalogue.createVariant(id, dto);
+    return this.catalogue.createVariant(id, dto, user.id);
   }
 
   @Post('products/:id/media')
@@ -135,12 +143,71 @@ export class CatalogueController {
     return this.catalogue.proposePrice(variantId, user.id, dto);
   }
 
+  @Get('price-approvals')
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission(PERMISSIONS.CATALOGUE.VIEW)
+  listPriceApprovals(@Query('status') status?: string) {
+    return this.catalogue.listPriceApprovals(status);
+  }
+
   @Post('price-approvals/:id/approve')
   @ApiBearerAuth()
   @UseGuards(AuthGuard, PermissionsGuard)
   @RequirePermission(PERMISSIONS.CATALOGUE.APPROVE_PRICE)
   approvePrice(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.catalogue.approvePrice(id, user.id, user.isOwner);
+  }
+
+  @Post('price-approvals/:id/reject')
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission(PERMISSIONS.CATALOGUE.APPROVE_PRICE)
+  rejectPrice(
+    @Param('id') id: string,
+    @Body('notes') notes: string | undefined,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.catalogue.rejectPrice(id, user.id, notes);
+  }
+
+  @Get('products/:id/units')
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission(PERMISSIONS.CATALOGUE.VIEW)
+  listTrackedUnits(@Param('id') id: string) {
+    return this.catalogue.listTrackedUnits(id);
+  }
+
+  @Post('products/:id/units')
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission(PERMISSIONS.CATALOGUE.UPDATE)
+  addTrackedUnit(
+    @Param('id') id: string,
+    @Body()
+    dto: {
+      unitCode?: string;
+      condition?: string;
+      defectNotes?: string;
+      status?: string;
+      lotId?: string;
+    },
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.catalogue.addTrackedUnit(id, dto, user.id);
+  }
+
+  @Patch('units/:unitId')
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission(PERMISSIONS.CATALOGUE.UPDATE)
+  updateTrackedUnit(
+    @Param('unitId') unitId: string,
+    @Body() dto: { condition?: string; defectNotes?: string; status?: string },
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.catalogue.updateTrackedUnit(unitId, dto, user.id);
   }
 
   @Post('products/:id/publish')
@@ -161,5 +228,56 @@ export class CatalogueController {
     @Body('reason') reason?: string,
   ) {
     return this.catalogue.unpublishProduct(id, user.id, reason);
+  }
+
+  @Get('wishlist')
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  getWishlist(@CurrentUser() user: AuthenticatedUser) {
+    return this.catalogue.getCustomerWishlist(user.id);
+  }
+
+  @Post('wishlist/items')
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  addWishlistItem(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body()
+    dto: {
+      productId: string;
+      variantId?: string | null;
+      priceAtSaveCents?: number;
+      addedAt?: string;
+    },
+  ) {
+    return this.catalogue.addCustomerWishlistItem(user.id, dto);
+  }
+
+  @Delete('wishlist/items/:productId')
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  removeWishlistItem(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('productId') productId: string,
+  ) {
+    return this.catalogue.removeCustomerWishlistItem(user.id, productId);
+  }
+
+  @Post('wishlist/merge')
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  mergeWishlist(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body()
+    dto: {
+      items?: Array<{
+        productId: string;
+        variantId?: string | null;
+        priceAtSaveCents?: number;
+        addedAt?: string;
+      }>;
+    },
+  ) {
+    return this.catalogue.mergeCustomerWishlist(user.id, dto.items ?? []);
   }
 }

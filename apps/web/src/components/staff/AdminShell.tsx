@@ -69,6 +69,7 @@ const NAV_SECTIONS: NavSection[] = [
       { label: 'Product catalogue', href: '/staff/products', Icon: Store, permission: 'catalogue.view' },
       { label: 'Preparation', href: '/staff/preparation', Icon: ListChecks, permission: 'catalogue.update' },
       { label: 'Inventory & stocktakes', href: '/staff/inventory', Icon: Warehouse, permission: 'inventory.view' },
+      { label: 'Operations hub', href: '/staff/operations', Icon: ClipboardCheck, permission: 'quotes.view' },
     ],
   },
   {
@@ -87,6 +88,7 @@ const NAV_SECTIONS: NavSection[] = [
       { label: 'Orders', href: '/staff/orders', Icon: ShoppingBag, permission: 'orders.view' },
       { label: 'Collections', href: '/staff/collections', Icon: Package, permission: 'collections.manage' },
       { label: 'Payments', href: '/staff/payments', Icon: CreditCard, permission: 'payments.view' },
+      { label: 'Tax & E-VAT', href: '/staff/tax-invoices', Icon: Receipt, permission: 'tax.view' },
       { label: 'Returns', href: '/staff/returns', Icon: RotateCcw, permission: 'returns.review' },
     ],
   },

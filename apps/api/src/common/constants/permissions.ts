@@ -1,3 +1,11 @@
+export const OWNER_GROUP_NAME = 'Owner';
+export const OWNER_GROUP_DESCRIPTION =
+  'Intrinsic system group — always exists and grants unrestricted access to all permissions.';
+
+export function isOwnerGroupName(name?: string | null): boolean {
+  return (name ?? '').trim().toLowerCase() === OWNER_GROUP_NAME.toLowerCase();
+}
+
 export const PERMISSIONS = {
   INVENTORY: {
     VIEW_STOCK: 'inventory.view',
@@ -99,6 +107,20 @@ export const PERMISSIONS = {
     VIEW: 'staff_reports.view',
     MANAGE: 'staff_reports.manage',
   },
+  TAX: {
+    VIEW: 'tax.view',
+    MANAGE: 'tax.manage',
+  },
+  OPERATIONS: {
+    VIEW_QUOTES: 'quotes.view',
+    MANAGE_QUOTES: 'quotes.manage',
+    VIEW_SHIFTS: 'shifts.view',
+    MANAGE_SHIFTS: 'shifts.manage',
+    VIEW_SERVICE_TICKETS: 'service_tickets.view',
+    MANAGE_SERVICE_TICKETS: 'service_tickets.manage',
+    VIEW_SUPPLIERS: 'suppliers.view',
+    MANAGE_SUPPLIERS: 'suppliers.manage',
+  },
 } as const;
 
 export const PERMISSION_IMPLIED_BY: Record<string, string[]> = {
@@ -124,4 +146,14 @@ export const PERMISSION_IMPLIED_BY: Record<string, string[]> = {
   'incidents.view': ['incidents.manage', 'inventory.view'],
   'incidents.manage': ['inventory.approve_adjustment'],
   'staff_reports.view': ['staff_reports.manage'],
+  'tax.view': ['tax.manage', 'payments.view'],
+  'tax.manage': ['payments.approve_manual'],
+  'quotes.view': ['quotes.manage', 'orders.view'],
+  'quotes.manage': ['orders.create_walk_in'],
+  'shifts.view': ['shifts.manage', 'payments.view'],
+  'shifts.manage': ['payments.record_manual'],
+  'service_tickets.view': ['service_tickets.manage', 'orders.view'],
+  'service_tickets.manage': ['returns.review'],
+  'suppliers.view': ['suppliers.manage', 'shipments.view'],
+  'suppliers.manage': ['shipments.create', 'shipments.manage'],
 };

@@ -18,6 +18,7 @@ import {
 import {
   CreateShipmentView,
   type ApprovedRequestSuggestion,
+  type DemandRestockSuggestion,
   type DraftManifestRow,
 } from '@/components/staff/shipments/CreateShipmentView';
 import {
@@ -33,7 +34,7 @@ import {
   type ShipmentStatus,
 } from '@/components/staff/shipments/shipmentMapper';
 import { EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
-import { catalogueApi, governanceApi, receivingApi, requestsApi, shipmentsApi } from '@/lib/api';
+import { catalogueApi, governanceApi, receivingApi, requestsApi, shipmentsApi, sourcingApi } from '@/lib/api';
 import { downloadCsv } from '@/lib/staffUtils';
 import { useToast } from '@/providers/toast.provider';
 import { ChevronRight, Download, Plus, Search } from 'lucide-react';
@@ -49,6 +50,7 @@ export default function StaffShipmentsPage() {
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
   const [variantOptions, setVariantOptions] = useState<ProductVariantOption[]>([]);
   const [approvedRequests, setApprovedRequests] = useState<ApprovedRequestSuggestion[]>([]);
+  const [demandRecommendations, setDemandRecommendations] = useState<DemandRestockSuggestion[]>([]);
   const [providerOptions, setProviderOptions] = useState<string[]>([
     'Atlantic Freight & Logistics',
     'OceanBridge Cargo',
@@ -88,21 +90,21 @@ export default function StaffShipmentsPage() {
     if (!silent) setLoading(true);
     setLoadError(null);
     try {
-      const [res, productsRes, settingsRes, requestsRes] = await Promise.all([
+      const [res, productsRes, providersRes, requestsRes, recRes] = await Promise.all([
         shipmentsApi.list(),
         catalogueApi.listAdmin().catch(() => []),
-        governanceApi.listSettings().catch(() => []),
+        governanceApi.getShipmentProviders().catch(() => null),
         requestsApi.list().catch(() => []),
+        sourcingApi.recommendations().catch(() => null),
       ]);
-      const providersRow = (
-        Array.isArray(settingsRes) ? (settingsRes as Array<{ key?: string; value?: string }>) : []
-      ).find((r) => r.key === 'SHIPMENT_PROVIDERS');
-      if (providersRow?.value) {
-        const parsed = providersRow.value.split(',').map((s) => s.trim()).filter(Boolean);
-        if (parsed.length > 0) {
-          setProviderOptions(parsed);
-          setNewProvider((prev) => (parsed.includes(prev) ? prev : parsed[0]));
-        }
+      if (recRes && Array.isArray(recRes.restockRecommendations)) {
+        setDemandRecommendations(recRes.restockRecommendations);
+      }
+      if (providersRes && Array.isArray(providersRes.providers) && providersRes.providers.length > 0) {
+        setProviderOptions(providersRes.providers);
+        setNewProvider((prev) =>
+          providersRes.providers.includes(prev) ? prev : providersRes.providers[0],
+        );
       }
       const mapped = (Array.isArray(res) ? (res as ApiShipment[]) : []).map(mapApiShipment);
       setShipments(mapped);
@@ -388,7 +390,7 @@ export default function StaffShipmentsPage() {
               ? `${item.product.trim()} (${item.variant.trim()})`
               : item.product.trim(),
           quantity: Math.max(1, Number(item.qty) || 1),
-          unitCostCents: 0,
+          unitCostCents: Math.max(0, Math.round((Number(item.unitCostGhs) || 0) * 100)),
         }));
       if (validItems.length > 0) {
         await shipmentsApi.addManifest(created.id, { items: validItems });
@@ -426,6 +428,7 @@ export default function StaffShipmentsPage() {
         setDraftManifest={setDraftManifest}
         variantOptions={variantOptions}
         approvedRequests={approvedRequests}
+        demandRecommendations={demandRecommendations}
         onAddRow={() =>
           setDraftManifest((prev) => [...prev, { id: `dm-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, product: '', variant: '', qty: 1 }])
         }
@@ -467,6 +470,8 @@ export default function StaffShipmentsPage() {
         setManifestRevisionNote={setManifestRevisionNote}
         savingManifest={savingManifest}
         variantOptions={variantOptions}
+        approvedRequests={approvedRequests}
+        demandRecommendations={demandRecommendations}
         showTrackingForm={showTrackingForm}
         setShowTrackingForm={setShowTrackingForm}
         newMilestone={newMilestone}

@@ -1,6 +1,13 @@
 'use client';
 
-import { Button, EmptyState, ErrorState, PreparationSkeleton, SearchableSelect } from '@/components/ui';
+import {
+  Button,
+  ConfirmDialog,
+  EmptyState,
+  ErrorState,
+  PreparationSkeleton,
+  SearchableSelect,
+} from '@/components/ui';
 import { catalogueApi, governanceApi } from '@/lib/api';
 import { useToast } from '@/providers/toast.provider';
 import {
@@ -79,6 +86,10 @@ type PrepProduct = {
   category?: string;
   published?: boolean;
   isPublished?: boolean;
+  shipmentReference?: string;
+  unitAcquisitionCostCents?: number;
+  allocatedFreightAndDutyCents?: number;
+  estimatedLandedCostCents?: number;
   completedStageCount?: number;
   preparationStatus?: 'NOT_STARTED' | 'IN_PROGRESS' | 'PREPARED';
   images?: string[];
@@ -139,6 +150,11 @@ function StaffPreparationContent() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [revertAction, setRevertAction] = useState<'stage' | 'last' | 'resetAll' | null>(null);
+  const [confirmPrepReset, setConfirmPrepReset] = useState<
+    | null
+    | { kind: 'restartAll' }
+    | { kind: 'revert'; stepKey: string; stepLabel: string; source: 'stage' | 'last' }
+  >(null);
   const isBusy = submitting || revertAction !== null;
 
   const [activeIndex, setActiveIndex] = useState(0);
@@ -156,7 +172,62 @@ function StaffPreparationContent() {
   const [sellingPrice, setSellingPrice] = useState('0');
   const [pricingRationale, setPricingRationale] = useState('');
 
+  // Serialized / Individual Tracked Units (Appliances, Electronics, Open-Box items)
+  const [trackedUnits, setTrackedUnits] = useState<
+    Array<{
+      id: string;
+      unitCode: string;
+      condition: string;
+      status: string;
+      defectNotes?: string | null;
+    }>
+  >([]);
+  const [newUnitCode, setNewUnitCode] = useState('');
+  const [newUnitCondition, setNewUnitCondition] = useState('GOOD');
+  const [newUnitDefectNotes, setNewUnitDefectNotes] = useState('');
+  const [addingUnit, setAddingUnit] = useState(false);
+  const [floorTagModalOpen, setFloorTagModalOpen] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const loadTrackedUnits = useCallback(async (productId: string) => {
+    if (!productId) {
+      setTrackedUnits([]);
+      return;
+    }
+    try {
+      const list = await catalogueApi.listTrackedUnits(productId);
+      setTrackedUnits(Array.isArray(list) ? list : []);
+    } catch {
+      setTrackedUnits([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (selectedId) {
+      loadTrackedUnits(selectedId);
+    }
+  }, [selectedId, loadTrackedUnits]);
+
+  const handleAddTrackedUnit = async () => {
+    if (!selectedId || addingUnit) return;
+    setAddingUnit(true);
+    try {
+      await catalogueApi.addTrackedUnit(selectedId, {
+        unitCode: newUnitCode.trim() || undefined,
+        condition: newUnitCondition,
+        defectNotes: newUnitDefectNotes.trim() || undefined,
+      });
+      setNewUnitCode('');
+      setNewUnitDefectNotes('');
+      showToast('Registered serialized unit tag', 'success');
+      await loadTrackedUnits(selectedId);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Unable to register unit tag', 'error');
+    } finally {
+      setAddingUnit(false);
+    }
+  };
 
   const getCompletedCount = useCallback((p: PrepProduct | undefined) => {
     if (!p) return 0;
@@ -332,9 +403,16 @@ function StaffPreparationContent() {
       (activeStage.key === 'pricing' ? 'PRICING' : 'FINAL_REVIEW');
     setRevertAction(source);
     try {
-      await catalogueApi.revertPreparation(product.id, { step: stepToRevert });
+      const fresh = (await catalogueApi.revertPreparation(product.id, {
+        step: stepToRevert,
+      })) as PrepProduct;
       showToast(`Reverted ${activeStage.label} step`, 'success');
-      await loadProducts(true);
+      if (fresh?.id) {
+        setProducts((prev) =>
+          prev.map((item) => (item.id === fresh.id ? { ...item, ...fresh } : item)),
+        );
+        syncStageFromProduct({ ...product, ...fresh });
+      }
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Unable to undo preparation step', 'error');
     } finally {
@@ -346,9 +424,16 @@ function StaffPreparationContent() {
     if (!product || isBusy) return;
     setRevertAction('resetAll');
     try {
-      await catalogueApi.revertPreparation(product.id, { resetAll: true });
+      const fresh = (await catalogueApi.revertPreparation(product.id, {
+        resetAll: true,
+      })) as PrepProduct;
       showToast(`Preparation reset to Not Started for ${product.name}`, 'success');
-      await loadProducts(true);
+      if (fresh?.id) {
+        setProducts((prev) =>
+          prev.map((item) => (item.id === fresh.id ? { ...item, ...fresh } : item)),
+        );
+        syncStageFromProduct({ ...product, ...fresh });
+      }
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Unable to reset preparation', 'error');
     } finally {
@@ -443,10 +528,32 @@ function StaffPreparationContent() {
         );
       }
 
-      await loadProducts(
-        true,
-        isUpdatingCompletedStage ? activeIndex : undefined,
-      );
+      if (activeStage.key === 'approval') {
+        // Product is now published — remove from active preparation queue immediately
+        setProducts((prev) => {
+          const remaining = prev.filter((item) => item.id !== product.id);
+          const nextItem = remaining[0];
+          if (nextItem) {
+            setSelectedId(nextItem.id);
+            syncStageFromProduct(nextItem);
+          } else {
+            setSelectedId('');
+          }
+          return remaining;
+        });
+      } else {
+        // Fetch only the single updated product instead of reloading the entire catalogue & all shipments
+        const fresh = (await catalogueApi.getProduct(product.id)) as PrepProduct;
+        if (fresh?.id) {
+          setProducts((prev) =>
+            prev.map((item) => (item.id === fresh.id ? { ...item, ...fresh } : item)),
+          );
+          syncStageFromProduct(
+            { ...product, ...fresh },
+            isUpdatingCompletedStage ? activeIndex : undefined,
+          );
+        }
+      }
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Unable to save preparation step', 'error');
     } finally {
@@ -594,7 +701,16 @@ function StaffPreparationContent() {
                     loading={revertAction === 'stage'}
                     loadingText="Reverting…"
                     disabled={isBusy}
-                    onClick={() => handleRevertStep(activeStage.apiStep, 'stage')}
+                    onClick={() =>
+                      setConfirmPrepReset({
+                        kind: 'revert',
+                        stepKey:
+                          activeStage.apiStep ||
+                          (activeStage.key === 'pricing' ? 'PRICING' : 'FINAL_REVIEW'),
+                        stepLabel: activeStage.label,
+                        source: 'stage',
+                      })
+                    }
                   >
                     <RotateCcw size={13} />
                     <span>Undo {activeStage.label}</span>
@@ -652,6 +768,100 @@ function StaffPreparationContent() {
                       }}
                     />
                   </label>
+
+                  <div
+                    style={{
+                      marginTop: 14,
+                      padding: '12px 14px',
+                      background: '#f7faf8',
+                      border: '1px solid #d5e5dc',
+                      borderRadius: 4,
+                      display: 'grid',
+                      gap: 10,
+                    }}
+                  >
+                    <div>
+                      <span className="ship-eyebrow" style={{ color: 'var(--green)' }}>
+                        SERIALIZED / INDIVIDUAL UNIT TAGGING ({trackedUnits.length})
+                      </span>
+                      <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--muted)' }}>
+                        Register manufacturer serial numbers (for TVs, appliances, electronics) or individual open-box scratch-and-dent unit tags.
+                      </p>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      <input
+                        value={newUnitCode}
+                        onChange={(e) => setNewUnitCode(e.target.value)}
+                        placeholder="Serial # or Asset Tag (auto if blank)"
+                        style={{
+                          flex: '1 1 160px',
+                          padding: '7px 10px',
+                          border: '0.8px solid var(--line)',
+                          borderRadius: 3,
+                          fontSize: 12.5,
+                          background: '#fff',
+                        }}
+                      />
+                      <select
+                        value={newUnitCondition}
+                        onChange={(e) => setNewUnitCondition(e.target.value)}
+                        style={{
+                          padding: '7px 10px',
+                          border: '0.8px solid var(--line)',
+                          borderRadius: 3,
+                          fontSize: 12.5,
+                          background: '#fff',
+                        }}
+                      >
+                        <option value="NEW">NEW</option>
+                        <option value="GOOD">GOOD</option>
+                        <option value="FAIR">FAIR (Scratch &amp; Dent)</option>
+                      </select>
+                      <input
+                        value={newUnitDefectNotes}
+                        onChange={(e) => setNewUnitDefectNotes(e.target.value)}
+                        placeholder="Unit-specific defect note (optional)"
+                        style={{
+                          flex: '1 1 180px',
+                          padding: '7px 10px',
+                          border: '0.8px solid var(--line)',
+                          borderRadius: 3,
+                          fontSize: 12.5,
+                          background: '#fff',
+                        }}
+                      />
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        loading={addingUnit}
+                        loadingText="Adding…"
+                        disabled={addingUnit}
+                        onClick={handleAddTrackedUnit}
+                      >
+                        + Add Unit Tag
+                      </Button>
+                    </div>
+                    {trackedUnits.length > 0 && (
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        {trackedUnits.map((u) => (
+                          <span
+                            key={u.id}
+                            style={{
+                              padding: '3px 8px',
+                              fontSize: 11.5,
+                              background: '#fff',
+                              border: '1px solid #cce0d4',
+                              borderRadius: 3,
+                              color: 'var(--ink)',
+                            }}
+                          >
+                            <strong>{u.unitCode}</strong> · {u.condition}
+                            {u.defectNotes ? ` (${u.defectNotes})` : ''}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </>
               )}
 
@@ -900,8 +1110,80 @@ function StaffPreparationContent() {
               {activeStage.key === 'pricing' && (
                 <>
                   <p className="ship-card-sub">
-                    Propose a retail selling price for manager approval.
+                    Propose a retail selling price for manager approval based on landed acquisition
+                    and freight costs.
                   </p>
+
+                  {(() => {
+                    const acqCents = product.unitAcquisitionCostCents ?? 0;
+                    const freightCents = product.allocatedFreightAndDutyCents ?? 0;
+                    const landedCents =
+                      product.estimatedLandedCostCents ?? acqCents + freightCents;
+                    const proposedCents = Math.round(numericSelling * 100);
+                    const marginCents = proposedCents - landedCents;
+                    const marginPct =
+                      proposedCents > 0 ? Math.round((marginCents / proposedCents) * 100) : 0;
+
+                    return (
+                      <div
+                        style={{
+                          marginTop: 14,
+                          padding: '12px 14px',
+                          background: '#f7faf8',
+                          border: '1px solid #d5e5dc',
+                          borderRadius: 4,
+                          fontSize: 12.5,
+                          display: 'grid',
+                          gap: 6,
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: 'var(--muted)' }}>Originating shipment</span>
+                          <strong>{product.shipmentReference || 'Warehouse'}</strong>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: 'var(--muted)' }}>Unit acquisition cost (FOB)</span>
+                          <strong>GHS {(acqCents / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: 'var(--muted)' }}>
+                            Allocated freight, duty &amp; clearing
+                          </span>
+                          <strong>GHS {(freightCents / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>
+                        </div>
+                        <div
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            borderTop: '0.8px solid var(--line)',
+                            paddingTop: 6,
+                          }}
+                        >
+                          <strong style={{ color: 'var(--ink)' }}>Estimated landed cost / unit</strong>
+                          <strong style={{ color: 'var(--ink)' }}>
+                            GHS {(landedCents / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </strong>
+                        </div>
+                        {proposedCents > 0 && (
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span style={{ color: 'var(--muted)' }}>Projected gross margin</span>
+                            <strong
+                              style={{
+                                color:
+                                  landedCents > 0 && marginCents < 0
+                                    ? '#b42318'
+                                    : 'var(--green)',
+                              }}
+                            >
+                              GHS {(marginCents / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}{' '}
+                              ({marginPct}%)
+                            </strong>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
                   <label className="login-field" style={{ marginTop: 14 }}>
                     <span>Proposed selling price (GHS)</span>
                     <input
@@ -1040,15 +1322,18 @@ function StaffPreparationContent() {
                       style={{ flex: 1 }}
                       onClick={() => {
                         const prevStage = STAGES[Math.max(0, completedCount - 1)];
-                        handleRevertStep(
-                          prevStage?.apiStep ||
+                        setConfirmPrepReset({
+                          kind: 'revert',
+                          stepKey:
+                            prevStage?.apiStep ||
                             (prevStage?.key === 'pricing' ? 'PRICING' : 'FINAL_REVIEW'),
-                          'last',
-                        );
+                          stepLabel: prevStage?.label ?? 'last step',
+                          source: 'last',
+                        });
                       }}
                     >
                       <RotateCcw size={13} />
-                      <span>Undo last step</span>
+                      <span>Revert</span>
                     </Button>
                   )}
                   <Button
@@ -1058,17 +1343,167 @@ function StaffPreparationContent() {
                     loadingText="Resetting…"
                     disabled={isBusy}
                     style={{ flex: 1 }}
-                    onClick={handleRestartPreparation}
+                    onClick={() => setConfirmPrepReset({ kind: 'restartAll' })}
                   >
                     <RotateCcw size={13} />
                     <span>Restart all</span>
                   </Button>
                 </div>
               )}
+              <Button
+                type="button"
+                variant="secondary"
+                style={{ width: '100%', marginTop: 10 }}
+                onClick={() => setFloorTagModalOpen(true)}
+              >
+                <span>Print Showroom Floor Tag / QR</span>
+              </Button>
             </aside>
           </div>
+
+          {floorTagModalOpen && (
+            <div
+              className="login-backdrop"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Showroom Floor Tag"
+              onClick={() => setFloorTagModalOpen(false)}
+            >
+              <div
+                className="login-card"
+                style={{ maxWidth: 420 }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="login-inner">
+                  <div className="eyebrow">AMERICANHOMES WAREHOUSE SHOWROOM · FLOOR TAG</div>
+                  <h2 className="login-title" style={{ fontSize: 22, marginTop: 4 }}>
+                    {product.name}
+                  </h2>
+                  <p className="login-subtitle">
+                    SKU: <strong>{primaryVariant?.sku ?? product.id.slice(-8).toUpperCase()}</strong> · Condition:{' '}
+                    <strong>{condition.toUpperCase()}</strong>
+                  </p>
+                  <div
+                    style={{
+                      marginTop: 14,
+                      padding: '14px 16px',
+                      background: '#f7faf8',
+                      border: '1.5px solid var(--green)',
+                      borderRadius: 4,
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <div>
+                      <span style={{ fontSize: 11, color: 'var(--muted)', display: 'block' }}>
+                        SHOWROOM CASH &amp; CARRY PRICE
+                      </span>
+                      <strong style={{ fontSize: 24, color: 'var(--green)' }}>
+                        GHS{' '}
+                        {(
+                          numericSelling > 0
+                            ? numericSelling
+                            : (primaryVariant?.priceCents ?? 0) / 100
+                        ).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </strong>
+                    </div>
+                    <div
+                      style={{
+                        padding: '6px 10px',
+                        border: '1px dashed var(--green)',
+                        borderRadius: 4,
+                        fontSize: 10.5,
+                        textAlign: 'center',
+                        background: '#fff',
+                      }}
+                    >
+                      <strong style={{ display: 'block', color: 'var(--ink)' }}>SCAN / VISIT</strong>
+                      <span style={{ color: 'var(--muted)' }}>/shop/{product.id.slice(-8)}</span>
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      marginTop: 12,
+                      padding: '10px 12px',
+                      background: '#fff',
+                      border: '0.8px solid var(--line)',
+                      borderRadius: 4,
+                      fontSize: 12,
+                    }}
+                  >
+                    <strong style={{ display: 'block', marginBottom: 4 }}>
+                      Inspection &amp; Defect Disclosure:
+                    </strong>
+                    <span style={{ color: 'var(--muted)' }}>
+                      {product.defectDisclosure ||
+                        inspectionNotes.trim() ||
+                        'Inspected & tested by AmericanHomes QA. No major cosmetic or functional defects.'}
+                    </span>
+                    {trackedUnits.length > 0 && (
+                      <div style={{ marginTop: 6, fontSize: 11, color: 'var(--ink)' }}>
+                        <strong>Registered Unit Tag(s):</strong>{' '}
+                        {trackedUnits.map((u) => u.unitCode).join(', ')}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      style={{ flex: 1 }}
+                      onClick={() => setFloorTagModalOpen(false)}
+                    >
+                      Close
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="primary"
+                      style={{ flex: 1 }}
+                      onClick={() => {
+                        if (typeof window !== 'undefined') window.print();
+                      }}
+                    >
+                      Print Floor Tag
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </>
       )}
+      <ConfirmDialog
+        open={Boolean(confirmPrepReset && product)}
+        title={
+          confirmPrepReset?.kind === 'restartAll'
+            ? 'Restart all preparation steps?'
+            : `Revert ${confirmPrepReset?.kind === 'revert' ? confirmPrepReset.stepLabel : 'step'}?`
+        }
+        targetName={product?.name}
+        description={
+          confirmPrepReset?.kind === 'restartAll'
+            ? 'This will clear every completed preparation step, reset the draft price to GHS 0, and return the product to Not Started.'
+            : 'This will undo the selected preparation step and any steps completed after it.'
+        }
+        reversible={false}
+        destructive={true}
+        confirmLabel={
+          confirmPrepReset?.kind === 'restartAll' ? 'Restart all' : 'Revert step'
+        }
+        loading={revertAction !== null}
+        onCancel={() => setConfirmPrepReset(null)}
+        onConfirm={async () => {
+          const action = confirmPrepReset;
+          setConfirmPrepReset(null);
+          if (!action) return;
+          if (action.kind === 'restartAll') {
+            await handleRestartPreparation();
+          } else {
+            await handleRevertStep(action.stepKey, action.source);
+          }
+        }}
+      />
     </div>
   );
 }

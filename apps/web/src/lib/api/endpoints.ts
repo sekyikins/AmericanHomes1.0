@@ -41,6 +41,7 @@ export const authApi = {
     }),
   revokeOtherSessions: () =>
     api.post<{ revoked: boolean; token?: string }>('/auth/revoke-other-sessions', {}),
+  logout: () => api.post<{ loggedOut: boolean }>('/auth/logout', {}),
   me: () =>
     api.get<{
       user: {
@@ -98,12 +99,109 @@ export const catalogueApi = {
     api.post<unknown>(`/catalogue/products/${productId}/preparation/revert`, dto),
   proposePrice: (variantId: string, dto: Record<string, unknown>) =>
     api.post<unknown>(`/catalogue/variants/${variantId}/price-proposals`, dto),
+  listPriceApprovals: (status?: string) =>
+    api.get<Record<string, unknown>[]>(
+      `/catalogue/price-approvals${status ? `?status=${encodeURIComponent(status)}` : ''}`,
+    ),
   approvePrice: (approvalId: string) =>
     api.post<unknown>(`/catalogue/price-approvals/${approvalId}/approve`, {}),
+  rejectPrice: (approvalId: string, notes?: string) =>
+    api.post<unknown>(`/catalogue/price-approvals/${approvalId}/reject`, { notes }),
+  listTrackedUnits: (productId: string) =>
+    api.get<
+      Array<{
+        id: string;
+        variantId: string;
+        lotId?: string | null;
+        unitCode: string;
+        status: string;
+        condition: string;
+        defectNotes?: string | null;
+        createdAt: string;
+      }>
+    >(`/catalogue/products/${productId}/units`),
+  addTrackedUnit: (
+    productId: string,
+    dto: {
+      unitCode?: string;
+      condition?: string;
+      defectNotes?: string;
+      status?: string;
+      lotId?: string;
+    },
+  ) =>
+    api.post<{
+      id: string;
+      unitCode: string;
+      condition: string;
+      status: string;
+      defectNotes?: string | null;
+    }>(`/catalogue/products/${productId}/units`, dto),
+  updateTrackedUnit: (
+    unitId: string,
+    dto: { condition?: string; defectNotes?: string; status?: string },
+  ) => api.patch<unknown>(`/catalogue/units/${unitId}`, dto),
   publishProduct: (id: string) =>
     api.post<unknown>(`/catalogue/products/${id}/publish`, {}),
   unpublishProduct: (id: string, reason?: string) =>
     api.post<unknown>(`/catalogue/products/${id}/unpublish`, { reason }),
+  getWishlist: () =>
+    api.get<{
+      items: Array<{
+        productId: string;
+        variantId?: string | null;
+        priceAtSaveCents?: number;
+        addedAt: string;
+        product?: Record<string, unknown> | null;
+      }>;
+      count: number;
+    }>('/catalogue/wishlist'),
+  addWishlistItem: (dto: {
+    productId: string;
+    variantId?: string | null;
+    priceAtSaveCents?: number;
+    addedAt?: string;
+  }) =>
+    api.post<{
+      items: Array<{
+        productId: string;
+        variantId?: string | null;
+        priceAtSaveCents?: number;
+        addedAt: string;
+        product?: Record<string, unknown> | null;
+      }>;
+      count: number;
+    }>('/catalogue/wishlist/items', dto),
+  removeWishlistItem: (productId: string) =>
+    api.del<{
+      items: Array<{
+        productId: string;
+        variantId?: string | null;
+        priceAtSaveCents?: number;
+        addedAt: string;
+        product?: Record<string, unknown> | null;
+      }>;
+      count: number;
+    }>(`/catalogue/wishlist/items/${encodeURIComponent(productId)}`),
+  mergeWishlist: (
+    items: Array<{
+      productId: string;
+      variantId?: string | null;
+      priceAtSaveCents?: number;
+      addedAt?: string;
+    }>,
+  ) =>
+    api.post<{
+      items: Array<{
+        productId: string;
+        variantId?: string | null;
+        priceAtSaveCents?: number;
+        addedAt: string;
+        product?: Record<string, unknown> | null;
+      }>;
+      count: number;
+      mergedNewCount?: number;
+    }>('/catalogue/wishlist/merge', { items }),
 };
 
 export const shipmentsApi = {
@@ -133,6 +231,10 @@ export const receivingApi = {
     api.post<unknown>(`/receiving/discrepancies/${id}/resolve`, { resolution, notes }),
   closeSession: (sessionId: string) =>
     api.post<unknown>(`/receiving/sessions/${sessionId}/close`, {}),
+  createProductDraftFromLine: (
+    lineId: string,
+    dto?: { category?: string; brand?: string; condition?: string },
+  ) => api.post<unknown>(`/receiving/lines/${lineId}/create-product-draft`, dto ?? {}),
 };
 
 export const inventoryApi = {
@@ -152,11 +254,19 @@ export const inventoryApi = {
         available: number;
         held: number;
         unavailable: number;
+        lotId?: string | null;
         lotRef: string;
+        binLocation?: string | null;
+        abcClass?: string;
+        landedUnitCostCents?: number;
+        boxCount?: number;
       }>;
       adjustments: Array<{
         id: string;
         variantId: string;
+        productName?: string | null;
+        variantName?: string | null;
+        sku?: string | null;
         previousQty: number;
         quantity: number;
         proposedQty: number;
@@ -179,6 +289,8 @@ export const inventoryApi = {
     api.get<Record<string, unknown>[]>(`/inventory/movements/${variantId}`),
   commitStock: (dto: Record<string, unknown>) =>
     api.post<unknown>('/inventory/commit', dto),
+  releaseUnavailable: (variantId: string, quantity: number) =>
+    api.post<unknown>('/inventory/release-unavailable', { variantId, quantity }),
   releaseHold: (holdId: string) =>
     api.del<unknown>(`/inventory/holds/${holdId}`),
 };
@@ -213,6 +325,52 @@ export const requestsApi = {
 
 export const sourcingApi = {
   list: () => api.get<Record<string, unknown>[]>('/sourcing'),
+  recommendations: () =>
+    api.get<{
+      generatedAt: string;
+      restockRecommendations: Array<{
+        productId: string;
+        variantId: string;
+        sku: string;
+        productName: string;
+        variantName: string;
+        category: string;
+        image: string;
+        demandScore: number;
+        priorityTier: 'HIGH' | 'MEDIUM' | 'EMERGING';
+        recommendedQty: number;
+        dominantChannel: 'Walk-in mover' | 'Storefront demand' | 'Omnichannel (Online + Walk-in)';
+        currentAvailable: number;
+        inTransitQty: number;
+        onlineSoldQty: number;
+        walkInSoldQty: number;
+        monthlyVelocity: number;
+        wishlistSaves: number;
+        wishlistUnmet: number;
+        openRequestUnits: number;
+        reservationUnits: number;
+        pollYesVotes: number;
+        returnDefectUnits: number;
+        lastUnitCostCents: number;
+        rationale: string;
+      }>;
+      markdownCandidates: Array<{
+        productId: string;
+        variantId: string;
+        sku: string;
+        productName: string;
+        category: string;
+        image: string;
+        daysOnFloor: number;
+        availableStock: number;
+        totalSoldQty: number;
+        wishlistSaves: number;
+        currentPriceCents: number;
+        suggestedPriceCents: number;
+        markdownPct: number;
+        reason: string;
+      }>;
+    }>('/sourcing/recommendations'),
   createGroup: (name: string, requestIds: string[]) =>
     api.post<unknown>('/sourcing/groups', { name, requestIds }),
   createItem: (dto: Record<string, unknown>) => api.post<unknown>('/sourcing', dto),
@@ -236,6 +394,11 @@ export const reservationsApi = {
   decline: (id: string, reason: string) =>
     api.post<unknown>(`/reservations/${id}/decline`, { reason }),
   cancel: (id: string) => api.post<unknown>(`/reservations/${id}/cancel`, {}),
+  convertToOrder: (id: string, notes?: string) =>
+    api.post<{ reservation: Record<string, unknown>; order: { id: string; reference?: string } }>(
+      `/reservations/${id}/convert`,
+      { notes },
+    ),
 };
 
 export const ordersApi = {
@@ -270,12 +433,196 @@ export const paymentsApi = {
   approveManual: (id: string) => api.post<unknown>(`/payments/${id}/approve`, {}),
   reverse: (id: string, reason: string) =>
     api.post<unknown>(`/payments/${id}/reverse`, { reason }),
+  getMyStoreCredit: () =>
+    api.get<{
+      customerId?: string;
+      totalAvailableCents: number;
+      entries: Array<{
+        id: string;
+        amountCents: number;
+        remainingCents: number;
+        status: string;
+        createdAt: string;
+      }>;
+    }>('/payments/store-credit/me'),
+  getCustomerStoreCredit: (customerId: string) =>
+    api.get<{
+      customerId?: string;
+      totalAvailableCents: number;
+      entries: Array<{
+        id: string;
+        amountCents: number;
+        remainingCents: number;
+        status: string;
+      }>;
+    }>(`/payments/store-credit/customer/${encodeURIComponent(customerId)}`),
+  redeemStoreCredit: (dto: { orderId: string; amountCents?: number }) =>
+    api.post<{
+      payment: Record<string, unknown>;
+      redeemedCents: number;
+      remainingOrderBalanceCents: number;
+    }>('/payments/redeem-store-credit', dto),
 };
 
 export const collectionsApi = {
   list: () => api.get<Record<string, unknown>[]>('/collections'),
   eligibleOrders: () => api.get<Record<string, unknown>[]>('/collections/eligible-orders'),
   record: (dto: Record<string, unknown>) => api.post<unknown>('/collections', dto),
+  sendReleasePin: (orderId: string) =>
+    api.post<{
+      sent: boolean;
+      orderId: string;
+      orderReference?: string;
+      maskedPhone: string;
+      expiresAt: string;
+      devPin?: string;
+    }>(`/collections/orders/${encodeURIComponent(orderId)}/send-release-pin`, {}),
+  verifyReleasePin: (orderId: string, pin: string) =>
+    api.post<{ verified: boolean; reason?: string }>(
+      `/collections/orders/${encodeURIComponent(orderId)}/verify-release-pin`,
+      { pin },
+    ),
+};
+
+export type TaxInvoiceDto = {
+  id: string;
+  invoiceNumber: string;
+  documentType: 'INVOICE' | 'CREDIT_NOTE';
+  orderId: string;
+  originalInvoiceId?: string | null;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  customerTin?: string | null;
+  netCents: number;
+  nhilCents: number;
+  getFundCents: number;
+  vatCents: number;
+  totalCents: number;
+  status: 'PENDING' | 'CLEARED' | 'SANDBOX' | 'FAILED';
+  isSandbox: boolean;
+  evatReference?: string | null;
+  evatQrCode?: string | null;
+  evatSignature?: string | null;
+  evatClearedAt?: string | null;
+  evatAttempts: number;
+  evatLastError?: string | null;
+  reason?: string | null;
+  issuedAt: string;
+  order?: { id: string; reference: string; paymentStatus: string; orderStatus: string };
+};
+
+export const taxApi = {
+  getConfig: () =>
+    api.get<{
+      seller: { tin: string; name: string; address: string; evatMode: 'LIVE' | 'SANDBOX' };
+      rates: { nhilBps: number; getFundBps: number; vatBps: number };
+    }>('/tax/config'),
+  listInvoices: (status?: string) =>
+    api.get<TaxInvoiceDto[]>(
+      `/tax/invoices${status ? `?status=${encodeURIComponent(status)}` : ''}`,
+    ),
+  getForOrder: (orderId: string) =>
+    api.get<{
+      seller: { tin: string; name: string; address: string; evatMode: 'LIVE' | 'SANDBOX' };
+      invoices: TaxInvoiceDto[];
+    }>(`/tax/orders/${encodeURIComponent(orderId)}`),
+  issueForOrder: (orderId: string, customerTin?: string) =>
+    api.post<TaxInvoiceDto>(`/tax/orders/${encodeURIComponent(orderId)}/issue`, { customerTin }),
+  retry: (invoiceId: string) =>
+    api.post<TaxInvoiceDto>(`/tax/invoices/${encodeURIComponent(invoiceId)}/retry`, {}),
+};
+
+export const operationsApi = {
+  // Phase 3: Quotations
+  listQuotes: (status?: string) =>
+    api.get<Record<string, unknown>[]>(
+      `/operations/quotes${status ? `?status=${encodeURIComponent(status)}` : ''}`,
+    ),
+  createQuote: (dto: {
+    customerName: string;
+    customerPhone?: string;
+    items: Array<{ variantId: string; quantity: number; unitPriceCents?: number }>;
+    validDays?: number;
+    depositPercent?: number;
+    notes?: string;
+  }) => api.post<Record<string, unknown>>('/operations/quotes', dto),
+  convertQuote: (id: string) =>
+    api.post<{ quotation: Record<string, unknown>; order: { id: string; reference: string } }>(
+      `/operations/quotes/${encodeURIComponent(id)}/convert`,
+      {},
+    ),
+  cancelQuote: (id: string) =>
+    api.post<Record<string, unknown>>(`/operations/quotes/${encodeURIComponent(id)}/cancel`, {}),
+
+  // Phase 4: POD & Service Tickets
+  recordPod: (
+    collectionId: string,
+    dto: { podSignedBy: string; podPhotoUrl?: string; notes?: string },
+  ) =>
+    api.post<Record<string, unknown>>(
+      `/operations/collections/${encodeURIComponent(collectionId)}/pod`,
+      dto,
+    ),
+  listServiceTickets: (status?: string) =>
+    api.get<Record<string, unknown>[]>(
+      `/operations/service-tickets${status ? `?status=${encodeURIComponent(status)}` : ''}`,
+    ),
+  createServiceTicket: (dto: {
+    orderId: string;
+    trackedUnitId?: string;
+    issueType?: string;
+    description: string;
+  }) => api.post<Record<string, unknown>>('/operations/service-tickets', dto),
+  updateServiceTicket: (
+    id: string,
+    dto: { status?: string; assignedTo?: string; resolutionNotes?: string },
+  ) =>
+    api.patch<Record<string, unknown>>(
+      `/operations/service-tickets/${encodeURIComponent(id)}`,
+      dto,
+    ),
+
+  // Phase 5: Cashier Till Shifts
+  listShifts: () => api.get<Record<string, unknown>[]>('/operations/shifts'),
+  openShift: (openingFloatCents: number, notes?: string) =>
+    api.post<Record<string, unknown>>('/operations/shifts/open', { openingFloatCents, notes }),
+  closeShift: (
+    id: string,
+    dto: {
+      countedCashCents: number;
+      reconciledMomoCents?: number;
+      reconciledBankCents?: number;
+      notes?: string;
+    },
+  ) =>
+    api.post<Record<string, unknown>>(
+      `/operations/shifts/${encodeURIComponent(id)}/close`,
+      dto,
+    ),
+
+  // Phase 6: Suppliers & Frozen Landed Cost
+  listSuppliers: () => api.get<Record<string, unknown>[]>('/operations/suppliers'),
+  createSupplier: (dto: {
+    name: string;
+    country?: string;
+    contactName?: string;
+    phone?: string;
+    email?: string;
+    currency?: string;
+    notes?: string;
+  }) => api.post<Record<string, unknown>>('/operations/suppliers', dto),
+  freezeLandedCosts: (shipmentId: string) =>
+    api.post<Record<string, unknown>>(
+      `/operations/shipments/${encodeURIComponent(shipmentId)}/freeze-landed-costs`,
+      {},
+    ),
+
+  // Phase 7: Warehouse Bin Location & ABC Class
+  updateLotLocation: (lotId: string, dto: { binLocation?: string; abcClass?: string }) =>
+    api.patch<Record<string, unknown>>(
+      `/operations/lots/${encodeURIComponent(lotId)}/location`,
+      dto,
+    ),
 };
 
 export const returnsApi = {
@@ -372,6 +719,8 @@ export const governanceApi = {
   votePoll: (id: string, choice = 'YES') =>
     api.post<unknown>(`/governance/polls/${id}/vote`, { choice }),
   listSettings: () => api.get<Record<string, unknown>[]>('/governance/settings'),
+  getShipmentProviders: () =>
+    api.get<{ providers: string[] }>('/governance/shipment-providers'),
   getPaymentAccounts: () =>
     api.get<{
       momoNetwork: string;

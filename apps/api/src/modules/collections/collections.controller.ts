@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth } from '@nestjs/swagger';
 import { PERMISSIONS } from '../../common/constants/permissions';
 import { AuthenticatedUser, CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -24,6 +24,21 @@ export class CollectionsController {
   @RequirePermission(PERMISSIONS.COLLECTIONS.MANAGE)
   findEligibleOrders() {
     return this.collections.findEligibleOrders();
+  }
+
+  @Post('orders/:orderId/send-release-pin')
+  @RequirePermission(PERMISSIONS.COLLECTIONS.MANAGE)
+  sendReleasePin(@Param('orderId') orderId: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.collections.sendReleasePin(orderId, user.id);
+  }
+
+  @Post('orders/:orderId/verify-release-pin')
+  @RequirePermission(PERMISSIONS.COLLECTIONS.MANAGE)
+  verifyReleasePin(
+    @Param('orderId') orderId: string,
+    @Body() dto: { pin: string },
+  ) {
+    return this.collections.verifyReleasePin(orderId, dto.pin);
   }
 
   @Post()

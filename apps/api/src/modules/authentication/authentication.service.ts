@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { isOwnerGroupName } from '../../common/constants/permissions';
 import { invalidateAuthCache } from '../../common/guards/auth.guard';
 import { createHash, randomBytes } from 'crypto';
 import { generateTotpCode, hashPassword, verifyPassword, verifyTotpCode } from '../../common/utils/password';
@@ -186,11 +187,13 @@ export class AuthenticationService {
       throw new UnauthorizedException('Invalid email or password');
     }
 
+    const hasOwnerGroup = user.staff.groupAssignments.some((a) => isOwnerGroupName(a.group.name));
+    const isOwner = user.staff.isOwner || hasOwnerGroup;
     const perms = user.staff.groupAssignments.flatMap((a) =>
       a.group.permissions.map((gp) => gp.permission.code),
     );
     const isPrivileged =
-      user.staff.isOwner || perms.some((p) => MANAGER_PERMISSION_MARKERS.includes(p));
+      isOwner || perms.some((p) => MANAGER_PERMISSION_MARKERS.includes(p));
 
     if (user.mfaEnabled && user.mfaSecret) {
       if (!dto.mfaCode) {
@@ -224,7 +227,7 @@ export class AuthenticationService {
       name: user.name,
       email: user.email,
       phone: user.phone,
-      isOwner: user.staff.isOwner,
+      isOwner,
     };
   }
 

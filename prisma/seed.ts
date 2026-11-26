@@ -3,48 +3,6 @@ import { hashPassword } from '../apps/api/src/common/utils/password.ts';
 
 const prisma = new PrismaClient();
 
-const ALL_PERMISSIONS = [
-  'inventory.view',
-  'inventory.adjust',
-  'inventory.approve_adjustment',
-  'stocktakes.manage',
-  'stocktakes.approve',
-  'orders.view',
-  'orders.create_walk_in',
-  'orders.approve',
-  'payments.view',
-  'payments.record_manual',
-  'payments.approve_manual',
-  'payments.refund',
-  'shipments.view',
-  'shipments.manage',
-  'receiving.view',
-  'receiving.manage',
-  'receiving.resolve_discrepancy',
-  'catalogue.view',
-  'catalogue.manage',
-  'catalogue.approve_price',
-  'catalogue.publish',
-  'product_requests.view',
-  'product_requests.review',
-  'sourcing.manage',
-  'allocations.manage',
-  'reservations.view',
-  'reservations.approve',
-  'collections.manage',
-  'returns.review',
-  'returns.approve',
-  'expenses.view',
-  'expenses.manage',
-  'reports.view',
-  'reports.export',
-  'customers.view',
-  'staff.view',
-  'staff.manage',
-  'permissions.manage',
-  'audit.view',
-];
-
 async function upsertGroupWithPermissions(
   name: string,
   description: string,
@@ -84,22 +42,31 @@ async function upsertGroupWithPermissions(
 }
 
 async function main() {
-  const ownerGroup = await upsertGroupWithPermissions(
-    'Owner',
-    'Full platform access including staff, permissions, finance, and audit logs',
-    ALL_PERMISSIONS,
-  );
+  // Owner is an intrinsic system group: anyone assigned to it automatically has all permissions
+  // without needing individual GroupPermission rows attached.
+  const ownerGroup = await prisma.permissionGroup.upsert({
+    where: { name: 'Owner' },
+    update: {
+      description:
+        'Intrinsic system group — always exists and grants unrestricted access to all permissions.',
+    },
+    create: {
+      name: 'Owner',
+      description:
+        'Intrinsic system group — always exists and grants unrestricted access to all permissions.',
+    },
+  });
 
   await upsertGroupWithPermissions(
     'Warehouse Officer',
-    'Shipments, receiving, stocktakes, and inventory adjustments',
-    ['shipments.view', 'shipments.manage', 'receiving.view', 'receiving.manage', 'inventory.view', 'inventory.adjust', 'stocktakes.manage', 'collections.manage'],
+    'Shipments, receiving, stocktakes, suppliers, and inventory adjustments',
+    ['shipments.view', 'shipments.manage', 'suppliers.view', 'suppliers.manage', 'receiving.view', 'receiving.manage', 'inventory.view', 'inventory.adjust', 'stocktakes.manage', 'collections.manage'],
   );
 
   await upsertGroupWithPermissions(
     'Sales & Cashier',
-    'Orders, reservations, manual payment recording, and collections',
-    ['orders.view', 'orders.create_walk_in', 'reservations.view', 'payments.view', 'payments.record_manual', 'collections.manage', 'returns.review', 'customers.view'],
+    'Orders, quotes, reservations, cashier shifts, tax invoices, manual payments, and collections',
+    ['orders.view', 'orders.create_walk_in', 'quotes.view', 'quotes.manage', 'reservations.view', 'payments.view', 'payments.record_manual', 'shifts.view', 'shifts.manage', 'tax.view', 'collections.manage', 'returns.review', 'service_tickets.view', 'service_tickets.manage', 'customers.view'],
   );
 
   const ownerEmail = (process.env.OWNER_EMAIL ?? 'owner@americanhomes.gh').toLowerCase();

@@ -56,4 +56,24 @@ export class RecordCollectionDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @ApiPropertyOptional({ description: '6-digit customer release PIN for representative collection verification' })
+  @IsOptional()
+  @IsString()
+  releasePin?: string;
+
+  @ApiPropertyOptional({ description: 'Fulfilment mode (SELF_COLLECTION, CUSTOMER_COURIER, WAREHOUSE_DISPATCH)' })
+  @IsOptional()
+  @IsString()
+  fulfilmentMode?: string;
+
+  @ApiPropertyOptional({ description: 'Collector / courier vehicle license plate number' })
+  @IsOptional()
+  @IsString()
+  vehiclePlate?: string;
+
+  @ApiPropertyOptional({ description: 'Delivery address when fulfilmentMode is WAREHOUSE_DISPATCH' })
+  @IsOptional()
+  @IsString()
+  deliveryAddress?: string;
 }

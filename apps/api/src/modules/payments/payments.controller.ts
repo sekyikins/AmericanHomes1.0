@@ -1,5 +1,7 @@
-import { Body, Controller, Get, Headers, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth } from '@nestjs/swagger';
+import type { RawBodyRequest } from '@nestjs/common';
+import type { Request } from 'express';
 import { PERMISSIONS } from '../../common/constants/permissions';
 import {
   AuthenticatedUser,
@@ -30,6 +32,31 @@ export class PaymentsController {
   @UseGuards(AuthGuard)
   initialize(@Body() dto: InitializePaymentDto, @CurrentUser() user: AuthenticatedUser) {
     return this.payments.initializePayment(dto, user.id, user.role);
+  }
+
+  @Get('store-credit/me')
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  getMyStoreCredit(@CurrentUser() user: AuthenticatedUser) {
+    return this.payments.getCustomerStoreCredit(user.id);
+  }
+
+  @Get('store-credit/customer/:customerId')
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission(PERMISSIONS.PAYMENTS.VIEW)
+  getCustomerStoreCredit(@Param('customerId') customerId: string) {
+    return this.payments.getCustomerStoreCredit(customerId);
+  }
+
+  @Post('redeem-store-credit')
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  redeemStoreCredit(
+    @Body() dto: { orderId: string; amountCents?: number },
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.payments.redeemStoreCredit(dto, user.id, user.role);
   }
 
   @Get('verify/:reference')
@@ -76,7 +103,11 @@ export class PaymentsController {
   }
 
   @Post('webhook')
-  webhook(@Body() payload: unknown, @Headers('x-paystack-signature') signature = '') {
-    return this.payments.handleWebhook(payload, signature);
+  webhook(
+    @Req() req: RawBodyRequest<Request>,
+    @Body() payload: unknown,
+    @Headers('x-paystack-signature') signature = '',
+  ) {
+    return this.payments.handleWebhook(payload, signature, req.rawBody);
   }
 }

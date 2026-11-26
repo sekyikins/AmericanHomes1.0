@@ -1,6 +1,9 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
+import { StaffAuditInterceptor } from './common/interceptors/staff-audit.interceptor';
 import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
 import {
   ApiRateLimitMiddleware,
@@ -29,6 +32,7 @@ import { ExpensesModule } from './modules/expenses/expenses.module';
 import { GovernanceModule } from './modules/governance/governance.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { OperationsModule } from './modules/operations/operations.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { PermissionsModule } from './modules/permissions/permissions.module';
@@ -41,6 +45,7 @@ import { ShipmentsModule } from './modules/shipments/shipments.module';
 import { SourcingModule } from './modules/sourcing/sourcing.module';
 import { StaffModule } from './modules/staff/staff.module';
 import { StocktakesModule } from './modules/stocktakes/stocktakes.module';
+import { TaxModule } from './modules/tax/tax.module';
 import { UsersModule } from './modules/users/users.module';
 
 @Module({
@@ -49,6 +54,13 @@ import { UsersModule } from './modules/users/users.module';
       isGlobal: true,
       load: [appConfig, authConfig, databaseConfig, storageConfig, integrationsConfig],
     }),
+    ThrottlerModule.forRoot([
+      {
+        name: 'default',
+        ttl: 60_000,
+        limit: 120,
+      },
+    ]),
     PrismaModule,
     HealthModule,
     AuthenticationModule,
@@ -75,9 +87,21 @@ import { UsersModule } from './modules/users/users.module';
     NotificationsModule,
     AuditModule,
     DashboardModule,
+    TaxModule,
+    OperationsModule,
     JobsModule,
   ],
   controllers: [AppController],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: StaffAuditInterceptor,
+    },
+  ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {

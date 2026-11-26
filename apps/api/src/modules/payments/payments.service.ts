@@ -11,6 +11,7 @@ import { PaystackService } from '../../integrations/paystack/paystack.service';
 import { AuditService } from '../audit/audit.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { TaxService } from '../tax/tax.service';
 import { InitializePaymentDto } from './dto/initialize-payment.dto';
 import { ManualPaymentDto } from './dto/manual-payment.dto';
 
@@ -24,6 +25,7 @@ export class PaymentsService {
     private readonly audit: AuditService,
     private readonly inventory: InventoryService,
     private readonly notifications: NotificationsService,
+    private readonly tax: TaxService,
   ) {}
 
   async listAll() {
@@ -60,11 +62,24 @@ export class PaymentsService {
     if (!Number.isInteger(dto.amountCents) || dto.amountCents <= 0) {
       throw new BadRequestException('Payment amount must be a positive integer');
     }
-    if (userRole !== 'STAFF' && dto.amountCents !== remainingCents) {
-      throw new BadRequestException(`Online payment must match remaining balance (${remainingCents} cents)`);
-    }
     if (dto.amountCents > remainingCents) {
       throw new BadRequestException(`Payment amount exceeds remaining balance (${remainingCents} cents)`);
+    }
+    // Enforce minimum deposit on the first installment of an order (default 30%, configurable via MIN_DEPOSIT_PERCENT)
+    if (userRole !== 'STAFF' && verifiedPaidCents === 0 && dto.amountCents < remainingCents) {
+      const minPctSetting = await this.prisma.systemSetting.findUnique({
+        where: { key: 'MIN_DEPOSIT_PERCENT' },
+      });
+      const minPct =
+        minPctSetting && Number(minPctSetting.value) > 0 && Number(minPctSetting.value) <= 100
+          ? Number(minPctSetting.value)
+          : 30;
+      const minDepositCents = Math.min(remainingCents, Math.ceil((order.totalCents * minPct) / 100));
+      if (dto.amountCents < minDepositCents) {
+        throw new BadRequestException(
+          `Initial partial payment must be at least ${minPct}% of order total (GHS ${(minDepositCents / 100).toLocaleString()})`,
+        );
+      }
     }
 
     const user = userId
@@ -102,15 +117,15 @@ export class PaymentsService {
 
   async verifyPayment(reference: string) {
     const verification = await this.paystack.verifyTransaction(reference);
+    const existingPayment = await this.prisma.payment.findUnique({
+      where: { reference },
+    });
+
     if (verification.status === 'success') {
-      const existingPayment = await this.prisma.payment.findUnique({
-        where: { reference },
-      });
       if (existingPayment) {
         if (
-          !verification.isStub &&
-          (verification.amountPesewas < existingPayment.amountCents ||
-            verification.currency.toUpperCase() !== 'GHS')
+          verification.amountPesewas < existingPayment.amountCents ||
+          verification.currency.toUpperCase() !== 'GHS'
         ) {
           this.logger.warn(
             `[SECURITY] Paystack amount/currency mismatch ref=${reference} expected=${existingPayment.amountCents} got=${verification.amountPesewas} ${verification.currency}`,
@@ -120,6 +135,23 @@ export class PaymentsService {
         const settlement = await this.settleVerifiedPayment(existingPayment, reference);
         return { ...verification, ...settlement };
       }
+    } else if (
+      existingPayment &&
+      existingPayment.status === 'PENDING' &&
+      ['failed', 'abandoned', 'reversed'].includes(String(verification.status).toLowerCase())
+    ) {
+      await this.prisma.payment.update({
+        where: { id: existingPayment.id },
+        data: { status: 'FAILED' },
+      });
+      await this.prisma.paymentAttempt.create({
+        data: {
+          paymentId: existingPayment.id,
+          amountCents: existingPayment.amountCents,
+          status: String(verification.status).toUpperCase(),
+          providerRef: reference,
+        },
+      });
     }
     return verification;
   }
@@ -179,6 +211,7 @@ export class PaymentsService {
         status: 'PENDING',
       },
     });
+    // Do NOT mark CheckoutSession COMPLETED on PENDING manual payment; only verified payments lock the hold.
     await this.audit.record({
       actorId: staffId,
       action: 'MANUAL_PAYMENT_RECORDED',
@@ -221,6 +254,14 @@ export class PaymentsService {
           : {}),
       },
     });
+    // Once paid in full, issue a gap-free sequential GRA E-VAT tax invoice (idempotent)
+    if (paymentStatus === 'PAID') {
+      await this.tax.issueForOrder(orderId).catch((err) => {
+        this.logger.error(
+          `Auto tax invoice issue failed for order ${orderId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+    }
   }
 
   async approveManualPayment(paymentId: string, staffId: string, isOwner = false) {
@@ -239,6 +280,10 @@ export class PaymentsService {
     const updated = await this.prisma.payment.update({
       where: { id: paymentId },
       data: { status: 'VERIFIED', approvedBy: staffId, verifiedAt: new Date() },
+    });
+    await this.prisma.checkoutSession.updateMany({
+      where: { orderId: payment.orderId, status: 'ACTIVE' },
+      data: { status: 'COMPLETED' },
     });
     await this.syncOrderPaymentStatus(payment.orderId);
     await this.audit.record({
@@ -293,6 +338,9 @@ export class PaymentsService {
         processedAt: new Date(),
       },
     });
+    await this.tax
+      .issueCreditNote(payment.orderId, payment.amountCents, reason, staffId)
+      .catch(() => null);
     await this.syncOrderPaymentStatus(payment.orderId);
     await this.audit.record({
       actorId: staffId,
@@ -315,8 +363,13 @@ export class PaymentsService {
     return updated;
   }
 
-  async handleWebhook(payload: unknown, signature: string) {
-    const raw = typeof payload === 'string' ? payload : JSON.stringify(payload ?? {});
+  async handleWebhook(payload: unknown, signature: string, rawBody?: Buffer) {
+    const raw: Buffer | string =
+      rawBody && rawBody.length > 0
+        ? rawBody
+        : typeof payload === 'string'
+          ? payload
+          : JSON.stringify(payload ?? {});
     if (!this.paystack.verifyWebhookSignature(raw, signature)) {
       this.logger.warn('[SECURITY] Rejected Paystack webhook with invalid signature');
       throw new UnauthorizedException('Invalid Paystack webhook signature');
@@ -324,7 +377,7 @@ export class PaymentsService {
 
     const event = payload as {
       event?: string;
-      data?: { reference?: string; amount?: number; currency?: string };
+      data?: { reference?: string; amount?: number; currency?: string; status?: string };
     };
     const reference = event?.data?.reference;
     if (!reference) {
@@ -342,17 +395,40 @@ export class PaymentsService {
     }
 
     if (event.event === 'charge.success') {
+      const currency = String(event.data?.currency ?? 'GHS').toUpperCase();
+      if (currency !== 'GHS') {
+        this.logger.warn(
+          `[SECURITY] Paystack webhook non-GHS currency ref=${reference} currency=${currency}`,
+        );
+        throw new BadRequestException('Webhook payment currency must be GHS');
+      }
       if (
-        typeof event.data?.amount === 'number' &&
+        typeof event.data?.amount !== 'number' ||
         event.data.amount < existingPayment.amountCents
       ) {
         this.logger.warn(
-          `[SECURITY] Paystack webhook underpayment ref=${reference} expected=${existingPayment.amountCents} got=${event.data.amount}`,
+          `[SECURITY] Paystack webhook underpayment ref=${reference} expected=${existingPayment.amountCents} got=${event.data?.amount}`,
         );
         throw new BadRequestException('Webhook payment amount is less than expected');
       }
       const result = await this.settleVerifiedPayment(existingPayment, reference);
       return { ok: true, ...result };
+    }
+
+    if (event.event === 'charge.failed') {
+      await this.prisma.payment.updateMany({
+        where: { id: existingPayment.id, status: 'PENDING' },
+        data: { status: 'FAILED' },
+      });
+      await this.prisma.paymentAttempt.create({
+        data: {
+          paymentId: existingPayment.id,
+          amountCents: existingPayment.amountCents,
+          status: 'FAILED',
+          providerRef: reference,
+        },
+      });
+      return { ok: true, status: 'FAILED', reference };
     }
 
     return { ok: true, reference };
@@ -389,25 +465,144 @@ export class PaymentsService {
       return { exception: true, settled: false, reference };
     }
 
-    await this.prisma.payment.update({
-      where: { id: existingPayment.id },
+    // Atomically claim PENDING -> VERIFIED so duplicate webhooks or concurrent verify calls
+    // can never double-settle a payment or trigger duplicate tax invoices.
+    const claimed = await this.prisma.payment.updateMany({
+      where: { id: existingPayment.id, status: { not: 'VERIFIED' } },
       data: { status: 'VERIFIED', verifiedAt: new Date() },
     });
-    const holds = await this.prisma.stockHold.findMany({
-      where: {
-        referenceType: { in: ['CHECKOUT_ORDER', 'ORDER'] },
-        referenceId: existingPayment.orderId,
-        status: 'ACTIVE',
-      },
-    });
-    for (const h of holds) {
-      await this.inventory.consumeHold(h.id);
+    if (claimed.count === 0) {
+      return { idempotent: true, settled: true, reference };
     }
+    // Complete the checkout session so the 15-minute checkout expiry cron preserves the order's active StockHold until warehouse collection
     await this.prisma.checkoutSession.updateMany({
       where: { orderId: existingPayment.orderId, status: 'ACTIVE' },
       data: { status: 'COMPLETED' },
     });
     await this.syncOrderPaymentStatus(existingPayment.orderId);
     return { settled: true, reference };
+  }
+
+  async getCustomerStoreCredit(userIdOrProfileId: string) {
+    const profile = await this.prisma.customerProfile.findFirst({
+      where: { OR: [{ userId: userIdOrProfileId }, { id: userIdOrProfileId }] },
+    });
+    if (!profile) {
+      return { entries: [], totalAvailableCents: 0 };
+    }
+    const entries = await this.prisma.storeCreditEntry.findMany({
+      where: {
+        customerId: profile.id,
+        status: { in: ['ACTIVE', 'PARTIALLY_REDEEMED'] },
+        remainingCents: { gt: 0 },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    const totalAvailableCents = entries.reduce((s, e) => s + e.remainingCents, 0);
+    return { customerId: profile.id, entries, totalAvailableCents };
+  }
+
+  async redeemStoreCredit(
+    dto: { orderId: string; amountCents?: number },
+    actorUserId?: string,
+    actorRole?: string,
+  ) {
+    const order = await this.prisma.salesOrder.findUnique({
+      where: { id: dto.orderId },
+      include: { customer: true, payments: true },
+    });
+    if (!order) throw new NotFoundException(`SalesOrder ${dto.orderId} not found`);
+    if (!order.customerId) {
+      throw new BadRequestException('Order has no linked customer profile for store credit redemption');
+    }
+    if (actorRole !== 'STAFF' && order.customer?.userId !== actorUserId) {
+      throw new ForbiddenException('You can only redeem store credit on your own orders');
+    }
+    if (order.orderStatus === 'CANCELLED') {
+      throw new BadRequestException('Cannot redeem store credit on a cancelled order');
+    }
+
+    const verifiedPaidCents = order.payments
+      .filter((p) => p.status === 'VERIFIED')
+      .reduce((s, p) => s + p.amountCents, 0);
+    const remainingOrderCents = Math.max(0, order.totalCents - verifiedPaidCents);
+    if (remainingOrderCents <= 0) {
+      throw new BadRequestException('Order is already paid in full');
+    }
+
+    const entries = await this.prisma.storeCreditEntry.findMany({
+      where: {
+        customerId: order.customerId,
+        status: { in: ['ACTIVE', 'PARTIALLY_REDEEMED'] },
+        remainingCents: { gt: 0 },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    const totalCreditAvailable = entries.reduce((s, e) => s + e.remainingCents, 0);
+    if (totalCreditAvailable <= 0) {
+      throw new BadRequestException('No available store credit balance on this customer account');
+    }
+
+    const requestedRedeem =
+      dto.amountCents && dto.amountCents > 0
+        ? Math.min(dto.amountCents, remainingOrderCents, totalCreditAvailable)
+        : Math.min(remainingOrderCents, totalCreditAvailable);
+
+    const payment = await this.prisma.$transaction(async (tx) => {
+      let toDeduct = requestedRedeem;
+      for (const entry of entries) {
+        if (toDeduct <= 0) break;
+        const deduct = Math.min(entry.remainingCents, toDeduct);
+        const newRemaining = entry.remainingCents - deduct;
+        await tx.storeCreditEntry.update({
+          where: { id: entry.id },
+          data: {
+            remainingCents: newRemaining,
+            status: newRemaining === 0 ? 'REDEEMED' : 'PARTIALLY_REDEEMED',
+          },
+        });
+        toDeduct -= deduct;
+      }
+
+      const ref = `AH-SC-${Date.now().toString().slice(-6)}`;
+      const createdPayment = await tx.payment.create({
+        data: {
+          orderId: order.id,
+          amountCents: requestedRedeem,
+          method: 'STORE_CREDIT',
+          status: 'VERIFIED',
+          reference: ref,
+          recordedBy: actorUserId,
+          approvedBy: actorUserId,
+          verifiedAt: new Date(),
+        },
+      });
+
+      await tx.checkoutSession.updateMany({
+        where: { orderId: order.id, status: 'ACTIVE' },
+        data: { status: 'COMPLETED' },
+      });
+
+      return createdPayment;
+    });
+
+    await this.syncOrderPaymentStatus(order.id);
+    await this.audit.record({
+      actorId: actorUserId,
+      action: 'STORE_CREDIT_REDEEMED',
+      entityType: 'Payment',
+      entityId: payment.id,
+      after: {
+        orderId: order.id,
+        redeemedCents: requestedRedeem,
+        remainingOrderBalanceCents: Math.max(0, remainingOrderCents - requestedRedeem),
+      },
+    });
+
+    return {
+      payment,
+      redeemedCents: requestedRedeem,
+      remainingOrderBalanceCents: Math.max(0, remainingOrderCents - requestedRedeem),
+    };
   }
 }

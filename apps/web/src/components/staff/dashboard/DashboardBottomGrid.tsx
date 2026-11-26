@@ -21,6 +21,7 @@ type OperationalAlertsSummary = {
   expiringReservationsCount: number;
   expiringReservationsValueCents: number;
   failedInspectionCount: number;
+  failedEvatCount?: number;
 };
 
 export function DashboardBottomGrid({
@@ -140,7 +141,8 @@ export function DashboardBottomGrid({
 
         {(operationalAlerts?.unexpectedHeldCount ?? 0) === 0 &&
         (operationalAlerts?.expiringReservationsCount ?? 0) === 0 &&
-        (operationalAlerts?.failedInspectionCount ?? 0) === 0 ? (
+        (operationalAlerts?.failedInspectionCount ?? 0) === 0 &&
+        (operationalAlerts?.failedEvatCount ?? 0) === 0 ? (
           <p style={{ color: 'var(--muted)', fontSize: 13, margin: '24px 0 8px' }}>
             No operational exceptions requiring attention.
           </p>
@@ -185,6 +187,21 @@ export function DashboardBottomGrid({
                     {operationalAlerts?.failedInspectionCount} lots with unavailable stock
                   </strong>
                   <span>Disposition &amp; inspection review</span>
+                </div>
+              </Link>
+            )}
+
+            {(operationalAlerts?.failedEvatCount ?? 0) > 0 && (
+              <Link href="/staff/tax-invoices" className="dash-alert-row">
+                <span className="dash-queue-icon red">
+                  <AlertTriangle size={14} />
+                </span>
+                <div>
+                  <strong>
+                    {operationalAlerts?.failedEvatCount} failed GRA E-VAT{' '}
+                    {operationalAlerts?.failedEvatCount === 1 ? 'submission' : 'submissions'}
+                  </strong>
+                  <span>Retry fiscal transmission in Tax Invoices</span>
                 </div>
               </Link>
             )}

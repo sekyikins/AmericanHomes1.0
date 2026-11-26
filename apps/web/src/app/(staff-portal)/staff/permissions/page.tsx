@@ -78,14 +78,19 @@ export default function StaffPermissionsPage() {
                 .filter((c): c is string => Boolean(c)),
             ),
           );
+          const isIntrinsic = g.name.trim().toLowerCase() === 'owner';
           return {
             id: g.id,
             name: g.name,
             refCode: g.id.slice(0, 12),
-            roleType: 'Permission group',
+            roleType: isIntrinsic ? 'Intrinsic system group' : 'Permission group',
             permissionCount: codes.length,
-            tone: g.name.toLowerCase().includes('owner') ? 'green' : 'blue',
-            membersLabel: g.description || 'Permission group',
+            tone: isIntrinsic ? 'green' : 'blue',
+            membersLabel:
+              g.description ||
+              (isIntrinsic
+                ? 'Intrinsic system group — unrestricted access to all permissions'
+                : 'Permission group'),
             permissionCodes: codes,
           };
         });
@@ -166,6 +171,17 @@ export default function StaffPermissionsPage() {
     setSelectedCodes((prev) =>
       prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code],
     );
+  };
+
+  const toggleSection = (codes: string[]) => {
+    setSelectedCodes((prev) => {
+      const allSelected = codes.every((c) => prev.includes(c));
+      if (allSelected) {
+        const drop = new Set(codes);
+        return prev.filter((c) => !drop.has(c));
+      }
+      return Array.from(new Set([...prev, ...codes]));
+    });
   };
 
   const isOwnerGroup = modalMode === 'edit' && groupName.trim().toLowerCase() === 'owner';
@@ -361,7 +377,10 @@ export default function StaffPermissionsPage() {
               </div>
               <div>
                 <span className={`acct-pill ${group.tone}`}>
-                  ● {group.permissionCount} permissions
+                  ●{' '}
+                  {group.name.trim().toLowerCase() === 'owner'
+                    ? 'All permissions (Intrinsic)'
+                    : `${group.permissionCount} permissions`}
                 </span>
               </div>
               <span className="staff-cell-muted">{group.membersLabel}</span>
@@ -381,6 +400,7 @@ export default function StaffPermissionsPage() {
         onGroupNameChange={setGroupName}
         onMembersLabelChange={setMembersLabel}
         onToggleCode={toggleCode}
+        onToggleSection={toggleSection}
         onSubmit={handleSubmit}
         onClose={() => setModalMode(null)}
       />

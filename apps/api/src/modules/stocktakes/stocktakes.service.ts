@@ -12,15 +12,30 @@ export class StocktakesService {
     private readonly audit: AuditService,
   ) {}
 
-  findAll() {
-    return this.prisma.stocktake.findMany({
+  async findAll() {
+    const rows = await this.prisma.stocktake.findMany({
       include: { lines: true },
       orderBy: { startedAt: 'desc' },
     });
+    // Blind count protection: hide systemQty & difference while an OPEN blind stocktake is being counted
+    return rows.map((st) =>
+      st.isBlind && st.status === 'OPEN'
+        ? {
+            ...st,
+            lines: st.lines.map((l) => ({ ...l, systemQty: null, difference: null })),
+          }
+        : st,
+    );
   }
 
-  create(dto: CreateStocktakeDto) {
-    return this.prisma.stocktake.create({ data: { reference: dto.reference } });
+  create(dto: CreateStocktakeDto & { isBlind?: boolean; abcFilter?: string }) {
+    return this.prisma.stocktake.create({
+      data: {
+        reference: dto.reference,
+        isBlind: dto.isBlind ?? true,
+        abcFilter: dto.abcFilter ? dto.abcFilter.toUpperCase() : 'ALL',
+      },
+    });
   }
 
   async recordLines(

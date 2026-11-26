@@ -122,21 +122,26 @@ export function ReviewReservationModal({
   selected,
   decisionNote,
   submitting,
+  converting = false,
   onDecisionNoteChange,
   onDeclineClick,
   onApprove,
+  onConvertToOrder,
   onClose,
 }: {
   open: boolean;
   selected: ReservationDetailSummary | null;
   decisionNote: string;
   submitting: boolean;
+  converting?: boolean;
   onDecisionNoteChange: (value: string) => void;
   onDeclineClick: () => void;
   onApprove: () => void;
+  onConvertToOrder?: () => void;
   onClose: () => void;
 }) {
   const isPending = selected?.status === 'PENDING';
+  const isApproved = selected?.status === 'APPROVED' || selected?.status === 'ACTIVE';
   const unitWord = selected?.requestedQty === 1 ? 'unit' : 'units';
 
   return (
@@ -242,6 +247,28 @@ export function ReviewReservationModal({
                 </Button>
               </div>
             </>
+          ) : isApproved && onConvertToOrder ? (
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 14 }}>
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={converting || submitting}
+                onClick={onClose}
+              >
+                Close
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                loading={converting}
+                loadingText="Converting…"
+                disabled={submitting}
+                onClick={onConvertToOrder}
+              >
+                <span>Convert to order (transfer stock hold)</span>
+                <ArrowRight size={15} />
+              </Button>
+            </div>
           ) : (
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }}>
               <Button type="button" variant="secondary" onClick={onClose}>

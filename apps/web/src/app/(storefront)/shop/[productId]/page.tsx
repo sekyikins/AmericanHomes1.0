@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ChevronUp,
   Clock,
+  Heart,
   Minus,
   Plus,
   RotateCcw,
@@ -29,11 +30,13 @@ import { formatGHS } from '@/lib/formatting/currency';
 import { useToast } from '@/providers/toast.provider';
 import { useAuth } from '@/store/auth.store';
 import { useCart } from '@/store/cart.store';
+import { useWishlist } from '@/store/wishlist.store';
 
 export default function ProductDetailPage({ params }: { params: { productId: string } }) {
   const [product, setProduct] = useState<CatalogProduct | null>(null);
   const [loadingProduct, setLoadingProduct] = useState(true);
   const { addItem } = useCart();
+  const { isSaved, toggleItem } = useWishlist();
   const { user, setLoginOpen } = useAuth();
   const { showToast } = useToast();
 
@@ -110,22 +113,41 @@ export default function ProductDetailPage({ params }: { params: { productId: str
   }
 
   const activeVariant = product.variants[selectedVariant] ?? product.variants[0];
+  const activeAvailableCount =
+    typeof activeVariant?.availableCount === 'number'
+      ? activeVariant.availableCount
+      : product.availableCount;
   const unitPricePesewas = activeVariant?.pricePesewas ?? product.pricePesewas;
-  const totalPesewas = unitPricePesewas * qty;
+  const effectiveQty = Math.min(Math.max(1, qty), Math.max(1, activeAvailableCount));
+  const totalPesewas = unitPricePesewas * effectiveQty;
   const galleryImages =
     product.images && product.images.length > 0 ? product.images : [product.image];
   const activeImage = galleryImages[selectedThumb] ?? galleryImages[0] ?? product.image;
+  const saved = isSaved(product.id);
+
+  const handleToggleWishlist = () => {
+    void toggleItem({
+      productId: product.id,
+      variantId: activeVariant?.id ?? product.defaultVariantId ?? null,
+      priceAtSavePesewas: unitPricePesewas,
+      name: product.name,
+      product,
+    });
+  };
 
   const handleAddToBag = () => {
-    for (let i = 0; i < qty; i++) {
+    if (activeAvailableCount <= 0) return;
+    for (let i = 0; i < effectiveQty; i++) {
       addItem({
         id: activeVariant?.id ?? product.defaultVariantId ?? product.id,
+        productId: product.id,
         name: product.name,
         category: product.category,
         variant: activeVariant?.name ?? 'Standard',
         pricePesewas: unitPricePesewas,
         image: product.image,
         defectDisclosures: product.defectDisclosures ?? null,
+        maxQty: activeAvailableCount,
       });
     }
     setJustAdded(true);
@@ -211,7 +233,7 @@ export default function ProductDetailPage({ params }: { params: { productId: str
             </span>
           </div>
 
-          <div className="pdp-price">{formatGHS(product.pricePesewas)}</div>
+          <div className="pdp-price">{formatGHS(unitPricePesewas)}</div>
 
           <p className="pdp-desc">{product.description}</p>
 
@@ -228,7 +250,14 @@ export default function ProductDetailPage({ params }: { params: { productId: str
                   key={variant.name}
                   type="button"
                   aria-pressed={active}
-                  onClick={() => setSelectedVariant(idx)}
+                  onClick={() => {
+                    setSelectedVariant(idx);
+                    const nextAvail =
+                      typeof variant.availableCount === 'number'
+                        ? variant.availableCount
+                        : product.availableCount;
+                    setQty((q) => Math.min(Math.max(1, q), Math.max(1, nextAvail)));
+                  }}
                   className={`pdp-variant-chip ${active ? 'active' : ''}`}
                 >
                   <span
@@ -244,10 +273,30 @@ export default function ProductDetailPage({ params }: { params: { productId: str
           </div>
 
           <div className="pdp-stock-box">
-            <CheckCircle2 size={18} color="var(--green)" style={{ flexShrink: 0 }} />
+            <CheckCircle2
+              size={18}
+              color={activeAvailableCount > 0 ? 'var(--green)' : '#b42318'}
+              style={{ flexShrink: 0 }}
+            />
             <div>
-              <strong>{product.availableCount} units available</strong>
-              <span>Ready for collection from our Tema warehouse</span>
+              <strong>
+                {activeAvailableCount > 0
+                  ? `${activeAvailableCount} ${activeAvailableCount === 1 ? 'unit' : 'units'} available${
+                      product.variants.length > 1 && activeVariant?.name
+                        ? ` (${activeVariant.name})`
+                        : ''
+                    }`
+                  : `Out of stock${
+                      product.variants.length > 1 && activeVariant?.name
+                        ? ` (${activeVariant.name})`
+                        : ''
+                    }`}
+              </strong>
+              <span>
+                {activeAvailableCount > 0
+                  ? 'Ready for collection from our Tema warehouse'
+                  : 'Select another variant or submit a product request'}
+              </span>
             </div>
           </div>
 
@@ -256,17 +305,17 @@ export default function ProductDetailPage({ params }: { params: { productId: str
               <button
                 type="button"
                 aria-label="Decrease quantity"
-                disabled={qty <= 1 || product.availableCount <= 0}
+                disabled={effectiveQty <= 1 || activeAvailableCount <= 0}
                 onClick={() => setQty((q) => Math.max(1, q - 1))}
               >
                 <Minus size={14} />
               </button>
-              <span>{qty}</span>
+              <span>{effectiveQty}</span>
               <button
                 type="button"
                 aria-label="Increase quantity"
-                disabled={qty >= Math.max(1, product.availableCount) || product.availableCount <= 0}
-                onClick={() => setQty((q) => Math.min(product.availableCount, q + 1))}
+                disabled={effectiveQty >= Math.max(1, activeAvailableCount) || activeAvailableCount <= 0}
+                onClick={() => setQty((q) => Math.min(activeAvailableCount, q + 1))}
               >
                 <Plus size={14} />
               </button>
@@ -275,7 +324,7 @@ export default function ProductDetailPage({ params }: { params: { productId: str
             <button
               type="button"
               className="button primary pdp-add-btn"
-              disabled={product.availableCount <= 0}
+              disabled={activeAvailableCount <= 0}
               onClick={handleAddToBag}
             >
               {justAdded ? (
@@ -290,11 +339,28 @@ export default function ProductDetailPage({ params }: { params: { productId: str
                 </>
               )}
             </button>
+
+            <button
+              type="button"
+              className="button"
+              aria-label={saved ? `Remove ${product.name} from wishlist` : `Save ${product.name} to wishlist`}
+              aria-pressed={saved}
+              onClick={handleToggleWishlist}
+              style={{
+                background: '#fff',
+                color: saved ? '#b42318' : 'var(--ink)',
+                borderColor: saved ? '#f3c6c3' : 'var(--line)',
+                padding: '0 14px',
+              }}
+            >
+              <Heart size={16} fill={saved ? 'currentColor' : 'none'} />
+              <span>{saved ? 'Saved' : 'Save'}</span>
+            </button>
           </div>
 
           <button
             type="button"
-            disabled={product.availableCount <= 0}
+            disabled={activeAvailableCount <= 0}
             onClick={handleOpenReserve}
             className="pdp-reserve-link"
             style={{ width: '100%', border: 0, background: 'transparent', padding: 0 }}

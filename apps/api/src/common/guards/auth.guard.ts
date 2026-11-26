@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../database/prisma.service';
+import { isOwnerGroupName } from '../constants/permissions';
 import { AuthenticatedUser } from '../decorators/current-user.decorator';
 import { verifySessionToken } from '../utils/token';
 
@@ -21,7 +22,7 @@ type CachedAuthEntry = {
   permissions: string[];
 };
 
-const AUTH_CACHE_TTL_MS = 15_000;
+const AUTH_CACHE_TTL_MS = 60_000;
 const authCache = new Map<string, CachedAuthEntry>();
 
 export function invalidateAuthCache(userId?: string): void {
@@ -46,15 +47,23 @@ export class AuthGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<{
       headers: Record<string, string | undefined>;
+      cookies?: Record<string, string | undefined>;
+      originalUrl?: string;
       user?: AuthenticatedUser;
     }>();
     const authHeader = request.headers.authorization;
-    if (!authHeader?.startsWith('Bearer ')) {
-      throw new UnauthorizedException('Missing or invalid authorization token');
+    let token = authHeader?.startsWith('Bearer ') ? authHeader.slice('Bearer '.length).trim() : '';
+    if (!token && request.cookies) {
+      const url = request.originalUrl ?? '';
+      const preferStaff = url.includes('/staff') || url.includes('/admin');
+      token = (
+        preferStaff
+          ? (request.cookies.ah_staff_session ?? request.cookies.ah_session ?? request.cookies.ah_customer_session)
+          : (request.cookies.ah_customer_session ?? request.cookies.ah_staff_session ?? request.cookies.ah_session)
+      )?.trim() ?? '';
     }
-    const token = authHeader.slice('Bearer '.length).trim();
     if (!token) {
-      throw new UnauthorizedException('Empty bearer token');
+      throw new UnauthorizedException('Missing or invalid authorization token');
     }
 
     const secret =
@@ -107,6 +116,7 @@ export class AuthGuard implements CanActivate {
                       select: {
                         group: {
                           select: {
+                            name: true,
                             permissions: {
                               select: { permission: { select: { code: true } } },
                             },
@@ -136,15 +146,16 @@ export class AuthGuard implements CanActivate {
           isOwner: boolean;
           restrictFinancials: boolean;
           groupAssignments: Array<{
-            group: { permissions: Array<{ permission: { code: string } }> };
+            group: { name: string; permissions: Array<{ permission: { code: string } }> };
           }>;
         };
         const staff = (dbUser as unknown as { staff?: StaffProfileWithPerms | null }).staff;
         if (!staff || !staff.isActive) {
           throw new UnauthorizedException('Staff account is inactive or missing');
         }
-        isOwner = staff.isOwner;
-        restrictFinancials = staff.restrictFinancials;
+        isOwner =
+          staff.isOwner || staff.groupAssignments.some((a) => isOwnerGroupName(a.group.name));
+        restrictFinancials = isOwner ? false : staff.restrictFinancials;
         permissions = Array.from(
           new Set(
             staff.groupAssignments.flatMap((a) =>

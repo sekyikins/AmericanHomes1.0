@@ -134,11 +134,16 @@ export function StockWorkspace({ mode }: { mode: 'inventory' | 'stocktakes' }) {
       setAdjustments(
         (data.adjustments ?? []).map((a) => {
           const match = byId.get(a.variantId);
+          const itemLabel = match
+            ? `${match.product} · ${match.variant}`
+            : a.productName
+              ? `${a.productName}${a.variantName ? ` · ${a.variantName}` : ''}`
+              : a.sku || a.variantId;
           return {
             id: a.id,
             reference: `AH-ADJ-${a.id.slice(-4).toUpperCase()}`,
             variantId: a.variantId,
-            item: match ? `${match.product} · ${match.variant}` : a.variantId,
+            item: itemLabel,
             delta: `${a.previousQty} → ${a.proposedQty} (${a.quantity >= 0 ? `+${a.quantity}` : a.quantity})`,
             reason: a.reason,
             status: (a.status as AdjustmentRow['status']) || 'PENDING',
@@ -520,7 +525,46 @@ export function StockWorkspace({ mode }: { mode: 'inventory' | 'stocktakes' }) {
                   <span className="staff-cell-text">{row.physical}</span>
                   <span className="staff-cell-text">{row.available}</span>
                   <span className="staff-cell-text">{row.held}</span>
-                  <span className="staff-cell-text">{row.unavailable}</span>
+                  <span className="staff-cell-text">
+                    {row.unavailable}
+                    {row.unavailable > 0 && row.status !== 'Unpublished' && (
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        title="Release inspected restock / returned units to available stock"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          try {
+                            await inventoryApi.releaseUnavailable(row.id, row.unavailable);
+                            showToast(
+                              `Released ${row.unavailable} inspected unit(s) of ${row.product} to Available stock`,
+                              'success',
+                            );
+                            await loadData(true);
+                          } catch (err) {
+                            showToast(
+                              err instanceof Error ? err.message : 'Unable to release unavailable stock',
+                              'error',
+                            );
+                          }
+                        }}
+                        style={{
+                          display: 'inline-block',
+                          marginLeft: 6,
+                          padding: '1px 6px',
+                          fontSize: 10.5,
+                          fontWeight: 700,
+                          color: 'var(--green)',
+                          background: '#eef6f1',
+                          border: '1px solid #cce0d4',
+                          borderRadius: 3,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        + Release
+                      </span>
+                    )}
+                  </span>
                   <span className="staff-cell-text">{row.condition}</span>
                   <div>
                     <span

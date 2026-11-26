@@ -1,6 +1,6 @@
 'use client';
 
-import { Bell, Home, Menu, ShoppingBag, User, X } from 'lucide-react';
+import { Bell, Heart, Home, Menu, ShoppingBag, User, X } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
@@ -8,6 +8,7 @@ import { NavigationHistoryTracker } from '@/components/ui';
 import { notificationsApi } from '@/lib/api';
 import { useAuth } from '@/store/auth.store';
 import { useCart } from '@/store/cart.store';
+import { useWishlist } from '@/store/wishlist.store';
 import { BagModal } from './BagModal';
 import { LoginModal } from './LoginModal';
 import { OrderConfirmedModal } from './OrderConfirmedModal';
@@ -21,6 +22,7 @@ const navItems = [
 export function CustomerHeader() {
   const pathname = usePathname();
   const { items, setBagOpen } = useCart();
+  const { count: wishlistCount } = useWishlist();
   const { user, loginOpen, setLoginOpen, setPostLoginRedirect } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -116,6 +118,35 @@ export function CustomerHeader() {
 
           <div className="actions">
             <Link
+              href="/wishlist"
+              className="icon-button"
+              aria-label={`Saved items, ${wishlistCount} ${wishlistCount === 1 ? 'item' : 'items'}`}
+              style={{ position: 'relative' }}
+            >
+              <Heart
+                size={19}
+                strokeWidth={2}
+                fill={pathname === '/wishlist' || wishlistCount > 0 ? '#b42318' : 'none'}
+                color={pathname === '/wishlist' || wishlistCount > 0 ? '#b42318' : 'currentColor'}
+              />
+              {wishlistCount > 0 && (
+                <span
+                  className="bag-count-pill"
+                  style={{
+                    position: 'absolute',
+                    top: -4,
+                    right: -4,
+                    minWidth: 16,
+                    height: 16,
+                    padding: '0 4px',
+                    fontSize: 10,
+                  }}
+                >
+                  {wishlistCount}
+                </span>
+              )}
+            </Link>
+            <Link
               href="/account/notifications"
               className="icon-button"
               aria-label="Notifications"
@@ -180,6 +211,13 @@ export function CustomerHeader() {
                   {item.label}
                 </Link>
               ))}
+              <Link
+                href="/wishlist"
+                className={`mobile-nav-link ${isActive('/wishlist') ? 'active' : ''}`}
+                onClick={() => setMobileMenuOpen(false)}
+              >
+                Saved items {wishlistCount > 0 ? `(${wishlistCount})` : ''}
+              </Link>
             </nav>
           </>
         )}

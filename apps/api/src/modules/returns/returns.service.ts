@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import { PrismaService } from '../../database/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { InventoryService } from '../inventory/inventory.service';
+import { TaxService } from '../tax/tax.service';
 import { CreateReturnDto } from './dto/create-return.dto';
 
 @Injectable()
@@ -10,6 +11,7 @@ export class ReturnsService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly inventory: InventoryService,
+    private readonly tax: TaxService,
   ) {}
 
   findAll() {
@@ -162,6 +164,9 @@ export class ReturnsService {
           },
         });
       }
+      await this.tax
+        .issueCreditNote(req.orderId, dto.refundAmountCents, `Return #${id}: ${req.reason}`, staffId)
+        .catch(() => null);
     } else if (dto.settlementType === 'STORE_CREDIT' && dto.refundAmountCents && req.order.customerId) {
       await this.prisma.storeCreditEntry.create({
         data: {
@@ -174,11 +179,78 @@ export class ReturnsService {
           notes: dto.notes,
         },
       });
+      await this.tax
+        .issueCreditNote(req.orderId, dto.refundAmountCents, `Return #${id} (store credit): ${req.reason}`, staffId)
+        .catch(() => null);
     }
 
-    // Returned goods enter unavailable inspection first; only RESTOCK disposition makes available
-    if (dto.disposition === 'RESTOCK' && dto.variantId && dto.quantity && dto.quantity > 0) {
-      await this.inventory.applyAdjustment(dto.variantId, dto.quantity, `RETURN_RESTOCK:${id}`, staffId);
+    // Returned goods enter unavailable inspection first; warehouse can release to available after inspection
+    const returnVariantId = dto.variantId ?? req.lines[0]?.variantId;
+    const returnQty = dto.quantity ?? req.lines[0]?.quantity ?? 1;
+    if (dto.disposition === 'RESTOCK' && returnVariantId && returnQty > 0) {
+      await this.inventory.receiveReturnedToUnavailable(returnVariantId, returnQty, id, staffId);
+    }
+
+    // If settlement is EXCHANGE, commit stock for the replacement variant and settle any price difference
+    if (dto.settlementType === 'EXCHANGE') {
+      const replacementVariantId = dto.exchangeVariantId ?? returnVariantId;
+      if (replacementVariantId && returnQty > 0) {
+        const diffPerUnit = dto.priceDiffCents ?? 0;
+        const totalDiff = diffPerUnit * returnQty;
+        await this.inventory.commitStock(
+          {
+            variantId: replacementVariantId,
+            quantity: returnQty,
+            reason: 'RETURN_EXCHANGE',
+            referenceType: 'ORDER',
+            referenceId: req.orderId,
+          },
+          staffId,
+        );
+        await this.prisma.orderLine.create({
+          data: {
+            orderId: req.orderId,
+            variantId: replacementVariantId,
+            quantity: returnQty,
+            unitPriceCents: Math.max(0, diffPerUnit),
+            notes: `Exchange replacement for Return #${id.slice(-6).toUpperCase()}`,
+          },
+        });
+        if (totalDiff > 0) {
+          // Customer owes an upgrade balance: increase order total and re-open payment status
+          await this.prisma.salesOrder.update({
+            where: { id: req.orderId },
+            data: {
+              totalCents: { increment: totalDiff },
+              paymentStatus: 'PARTIALLY_PAID',
+              fulfilmentStatus: 'PARTIALLY_COLLECTED',
+            },
+          });
+        } else {
+          await this.prisma.salesOrder.update({
+            where: { id: req.orderId },
+            data: { fulfilmentStatus: 'PARTIALLY_COLLECTED' },
+          });
+          if (totalDiff < 0 && req.order.customerId) {
+            // Downgrade exchange: issue the difference as store credit + VAT credit note
+            const creditAmt = Math.abs(totalDiff);
+            await this.prisma.storeCreditEntry.create({
+              data: {
+                customerId: req.order.customerId,
+                returnRequestId: id,
+                amountCents: creditAmt,
+                remainingCents: creditAmt,
+                status: 'ACTIVE',
+                issuedBy: staffId,
+                notes: `Exchange price difference credit for Return #${id.slice(-6).toUpperCase()}`,
+              },
+            });
+            await this.tax
+              .issueCreditNote(req.orderId, creditAmt, `Exchange price difference (Return #${id})`, staffId)
+              .catch(() => null);
+          }
+        }
+      }
     }
 
     const updated = await this.prisma.returnRequest.update({
