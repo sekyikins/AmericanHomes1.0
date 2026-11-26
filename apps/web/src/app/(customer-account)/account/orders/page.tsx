@@ -35,6 +35,9 @@ export default function OrdersPage() {
   const [returnOrder, setReturnOrder] = useState<CustomerOrderRecord | null>(null);
   const [payOrder, setPayOrder] = useState<CustomerOrderRecord | null>(null);
   const [payChannel, setPayChannel] = useState<'paystack_momo' | 'paystack_card'>('paystack_momo');
+  const [customPayAmountGhs, setCustomPayAmountGhs] = useState<string>('');
+  const [storeCreditPesewas, setStoreCreditPesewas] = useState<number>(0);
+  const [redeemingCredit, setRedeemingCredit] = useState(false);
   const [returnReason, setReturnReason] = useState('');
   const [returnLines, setReturnLines] = useState<Record<string, number>>({});
   const [returnSubmitted, setReturnSubmitted] = useState(false);
@@ -44,8 +47,13 @@ export default function OrdersPage() {
     if (!silent) setLoading(true);
     setError(null);
     try {
-      const mapped = mapCustomerOrders(await ordersApi.getMy());
+      const [rawOrders, creditRes] = await Promise.all([
+        ordersApi.getMy(),
+        paymentsApi.getMyStoreCredit().catch(() => ({ totalAvailableCents: 0, entries: [] })),
+      ]);
+      const mapped = mapCustomerOrders(rawOrders);
       setOrders(mapped);
+      setStoreCreditPesewas(Number(creditRes?.totalAvailableCents ?? 0));
       setExpandedId((prev) => prev ?? mapped[0]?.id ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load your orders.');
@@ -81,24 +89,55 @@ export default function OrdersPage() {
     if (!payOrder || submitting) return;
     const outstanding = Math.max(0, payOrder.totalPesewas - payOrder.paidPesewas);
     if (outstanding <= 0) return;
+    const chosenPesewas =
+      customPayAmountGhs && Number(customPayAmountGhs) > 0
+        ? Math.min(outstanding, Math.max(100, Math.round(Number(customPayAmountGhs) * 100)))
+        : outstanding;
     setSubmitting(true);
     try {
       const res = await paymentsApi.initialize({
         orderId: payOrder.id,
-        amountCents: outstanding,
+        amountCents: chosenPesewas,
         channel: payChannel,
       });
       if (res.authorizationUrl && res.authorizationUrl !== 'stub') {
         window.location.href = res.authorizationUrl;
         return;
       }
-      showToast(`Payment initialized for ${payOrder.reference}`, 'success');
+      showToast(
+        chosenPesewas < outstanding
+          ? `Installment payment of ${formatGHS(chosenPesewas)} initialized for ${payOrder.reference}`
+          : `Full balance payment initialized for ${payOrder.reference}`,
+        'success',
+      );
       setPayOrder(null);
       await loadOrders(true);
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Unable to initialize payment', 'error');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleRedeemStoreCredit = async () => {
+    if (!payOrder || redeemingCredit || storeCreditPesewas <= 0) return;
+    setRedeemingCredit(true);
+    try {
+      const res = await paymentsApi.redeemStoreCredit({ orderId: payOrder.id });
+      showToast(
+        `Applied ${formatGHS(res.redeemedCents)} store credit to ${payOrder.reference}`,
+        'success',
+      );
+      if (res.remainingOrderBalanceCents <= 0) {
+        setPayOrder(null);
+      } else {
+        setCustomPayAmountGhs((res.remainingOrderBalanceCents / 100).toFixed(2));
+      }
+      await loadOrders(true);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Unable to apply store credit', 'error');
+    } finally {
+      setRedeemingCredit(false);
     }
   };
 
@@ -238,14 +277,27 @@ export default function OrdersPage() {
                     </div>
                     <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
                       {outstanding > 0 && order.collectionStatus !== 'Cancelled' ? (
-                        <button
-                          type="button"
-                          className="button primary"
-                          style={{ flex: 1, minHeight: 36, fontSize: 12 }}
-                          onClick={() => setPayOrder(order)}
-                        >
-                          <CreditCard size={13} /> Pay balance
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            className="button primary"
+                            style={{ flex: 1, minHeight: 36, fontSize: 12 }}
+                            onClick={() => {
+                              setCustomPayAmountGhs((outstanding / 100).toFixed(2));
+                              setPayOrder(order);
+                            }}
+                          >
+                            <CreditCard size={13} /> Pay balance / installment
+                          </button>
+                          <button
+                            type="button"
+                            className="button"
+                            style={{ minHeight: 36, padding: '0 10px', fontSize: 12 }}
+                            onClick={() => setReceiptOrder(order)}
+                          >
+                            <FileText size={13} /> Invoice
+                          </button>
+                        </>
                       ) : (
                         <button
                           type="button"
@@ -253,7 +305,7 @@ export default function OrdersPage() {
                           style={{ flex: 1, minHeight: 36, fontSize: 12 }}
                           onClick={() => setReceiptOrder(order)}
                         >
-                          <FileText size={13} /> Receipt
+                          <FileText size={13} /> Receipt / Invoice
                         </button>
                       )}
                       {order.collectionStatus === 'Collected' && (
@@ -354,6 +406,11 @@ export default function OrdersPage() {
           order={payOrder}
           channel={payChannel}
           setChannel={setPayChannel}
+          customAmountGhs={customPayAmountGhs}
+          setCustomAmountGhs={setCustomPayAmountGhs}
+          storeCreditPesewas={storeCreditPesewas}
+          redeemingCredit={redeemingCredit}
+          onRedeemStoreCredit={handleRedeemStoreCredit}
           submitting={submitting}
           onSubmit={handlePayBalance}
           onClose={() => setPayOrder(null)}

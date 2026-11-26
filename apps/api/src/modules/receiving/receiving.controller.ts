@@ -58,4 +58,14 @@ export class ReceivingController {
   closeSession(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.receiving.closeSession(id, user.id);
   }
+
+  @Post('lines/:lineId/create-product-draft')
+  @RequirePermission(PERMISSIONS.RECEIVING.MANAGE)
+  createProductDraftFromLine(
+    @Param('lineId') lineId: string,
+    @Body() dto: { category?: string; brand?: string; condition?: string },
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.receiving.createProductDraftFromLine(lineId, dto, user.id);
+  }
 }

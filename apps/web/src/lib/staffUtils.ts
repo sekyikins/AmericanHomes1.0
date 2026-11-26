@@ -9,7 +9,11 @@ export function shortRef(value: string, prefix = 'REF'): string {
 }
 
 export function formatGhs(cents: number): string {
-  return `GHS ${(cents / 100).toLocaleString()}`;
+  const numeric = Number.isFinite(cents) ? cents : 0;
+  return `GHS ${(numeric / 100).toLocaleString('en-GH', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 }
 
 export function formatShortDate(value?: string | Date | null, fallback = 'Recent'): string {

@@ -2,56 +2,32 @@
 
 import { Check, CheckCircle2, Heart, Plus } from 'lucide-react';
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { CatalogProduct } from '@/lib/data/products';
 import { formatGHS } from '@/lib/formatting/currency';
-import { useToast } from '@/providers/toast.provider';
 import { useCart } from '@/store/cart.store';
-
-const WISHLIST_KEY = 'ah_saved_products';
+import { useWishlist } from '@/store/wishlist.store';
 
 export function ProductCard({ product }: { product: CatalogProduct }) {
   const { addItem } = useCart();
-  const { showToast } = useToast();
+  const { isSaved, toggleItem } = useWishlist();
   const [justAdded, setJustAdded] = useState(false);
-  const [saved, setSaved] = useState(false);
-
-  useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(WISHLIST_KEY);
-      if (raw) {
-        const list = JSON.parse(raw);
-        if (Array.isArray(list) && list.includes(product.id)) {
-          setSaved(true);
-        }
-      }
-    } catch {
-      // ignore storage errors
-    }
-  }, [product.id]);
+  const saved = isSaved(product.id);
 
   const handleToggleSave = () => {
-    const next = !saved;
-    setSaved(next);
-    try {
-      const raw = window.localStorage.getItem(WISHLIST_KEY);
-      const existing: string[] = raw && Array.isArray(JSON.parse(raw)) ? JSON.parse(raw) : [];
-      const updated = next
-        ? Array.from(new Set([...existing, product.id]))
-        : existing.filter((id) => id !== product.id);
-      window.localStorage.setItem(WISHLIST_KEY, JSON.stringify(updated));
-    } catch {
-      // ignore storage errors
-    }
-    showToast(
-      next ? `Saved ${product.name} to wishlist` : `Removed ${product.name} from wishlist`,
-      'info',
-    );
+    void toggleItem({
+      productId: product.id,
+      variantId: product.defaultVariantId ?? null,
+      priceAtSavePesewas: product.pricePesewas,
+      name: product.name,
+      product,
+    });
   };
 
   const handleQuickAdd = () => {
     addItem({
       id: product.defaultVariantId ?? product.id,
+      productId: product.id,
       name: product.name,
       category: product.category,
       variant: product.variants[0]?.name ?? 'Standard',

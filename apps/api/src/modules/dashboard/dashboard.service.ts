@@ -26,6 +26,8 @@ export class DashboardService {
     const endOfToday = new Date(now);
     endOfToday.setHours(23, 59, 59, 999);
 
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+
     const [inventoryLots, activeOrders, awaitingCollectionOrders, pendingAdjustments] =
       await Promise.all([
         this.prisma.stockLot.aggregate({ _sum: { available: true, held: true, unavailable: true } }),
@@ -98,7 +100,14 @@ export class DashboardService {
       }),
     ]);
 
-    const [expiringReservations, failedLotsCount] = await Promise.all([
+    const [
+      expiringReservations,
+      failedLotsCount,
+      failedEvatCount,
+      mtdTaxAgg,
+      clearedEvatMtdCount,
+      creditNotesMtdCount,
+    ] = await Promise.all([
       this.prisma.reservation.findMany({
         where: {
           status: { in: ['PENDING', 'APPROVED', 'ACTIVE'] },
@@ -109,6 +118,38 @@ export class DashboardService {
       this.prisma.stockLot.count({
         where: { unavailable: { gt: 0 } },
       }),
+      this.prisma.taxInvoice.count({
+        where: { status: 'FAILED' },
+      }),
+      restrictFinancials
+        ? Promise.resolve(null)
+        : this.prisma.taxInvoice.aggregate({
+            where: { issuedAt: { gte: startOfMonth } },
+            _sum: {
+              netCents: true,
+              nhilCents: true,
+              getFundCents: true,
+              vatCents: true,
+              totalCents: true,
+            },
+            _count: { _all: true },
+          }),
+      restrictFinancials
+        ? Promise.resolve(0)
+        : this.prisma.taxInvoice.count({
+            where: {
+              issuedAt: { gte: startOfMonth },
+              status: { in: ['CLEARED', 'SANDBOX'] },
+            },
+          }),
+      restrictFinancials
+        ? Promise.resolve(0)
+        : this.prisma.taxInvoice.count({
+            where: {
+              issuedAt: { gte: startOfMonth },
+              documentType: 'CREDIT_NOTE',
+            },
+          }),
     ]);
 
     const formatAge = (createdAt: Date) => {
@@ -274,6 +315,27 @@ export class DashboardService {
       0,
     );
 
+    const mtdVatCents = mtdTaxAgg?._sum.vatCents ?? 0;
+    const mtdNhilCents = mtdTaxAgg?._sum.nhilCents ?? 0;
+    const mtdGetFundCents = mtdTaxAgg?._sum.getFundCents ?? 0;
+    const taxSummary = restrictFinancials
+      ? null
+      : {
+          evatMode:
+            process.env.GRA_EVAT_BASE_URL && process.env.GRA_EVAT_API_KEY
+              ? ('LIVE' as const)
+              : ('SANDBOX' as const),
+          invoicesMtdCount: mtdTaxAgg?._count._all ?? 0,
+          clearedMtdCount: clearedEvatMtdCount,
+          creditNotesMtdCount,
+          failedEvatCount,
+          mtdNetSalesCents: mtdTaxAgg?._sum.netCents ?? 0,
+          mtdVatCents,
+          mtdNhilCents,
+          mtdGetFundCents,
+          mtdTotalTaxCents: mtdVatCents + mtdNhilCents + mtdGetFundCents,
+        };
+
     const result = {
       availableInventory: inventoryLots._sum.available ?? 0,
       heldInventory: inventoryLots._sum.held ?? 0,
@@ -290,12 +352,14 @@ export class DashboardService {
       pendingApprovals: approvalQueue.length,
       approvalQueue,
       salesActivity,
+      taxSummary,
       activeShipment,
       operationalAlerts: {
         unexpectedHeldCount: unexpectedDiscrepancies,
         expiringReservationsCount: expiringReservations.length,
         expiringReservationsValueCents,
         failedInspectionCount: failedLotsCount,
+        failedEvatCount,
       },
     };
     this.summaryCache.set(cacheKey, {

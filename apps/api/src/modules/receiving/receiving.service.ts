@@ -182,7 +182,21 @@ export class ReceivingService {
       }
 
       // Admitted expected goods enter UNAVAILABLE stock until onboarding completes (§4.8.1)
-      const targetVariantId = dto.variantId ?? manifestItem?.variantId ?? undefined;
+      let targetVariantId = dto.variantId ?? manifestItem?.variantId ?? undefined;
+      if (!targetVariantId && manifestItem?.productName) {
+        // Check if a catalog product with the same name already exists; if so, auto-link it
+        const existingProduct = await tx.product.findFirst({
+          where: { name: { equals: manifestItem.productName.trim(), mode: 'insensitive' } },
+          include: { variants: true },
+        });
+        if (existingProduct && existingProduct.variants[0]) {
+          targetVariantId = existingProduct.variants[0].id;
+          await tx.manifestItem.update({
+            where: { id: manifestItem.id },
+            data: { variantId: targetVariantId },
+          });
+        }
+      }
       if (targetVariantId && manifestItem) {
         const existingLot = await tx.stockLot.findFirst({ where: { receiptLineId: line.id } });
         if (existingLot) {
@@ -279,5 +293,103 @@ export class ReceivingService {
     });
 
     return updated;
+  }
+
+  async createProductDraftFromLine(
+    lineId: string,
+    dto: { category?: string; brand?: string; condition?: string },
+    staffId?: string,
+  ) {
+    const line = await this.prisma.receiptLine.findUnique({
+      where: { id: lineId },
+      include: {
+        manifestItem: true,
+        session: { include: { shipment: true } },
+        stockLots: true,
+      },
+    });
+    if (!line) throw new NotFoundException(`ReceiptLine ${lineId} not found`);
+
+    const productName =
+      line.manifestItem?.productName?.trim() ||
+      line.notes?.trim() ||
+      `Received Item ${line.id.slice(-5).toUpperCase()}`;
+    const skuBase =
+      productName
+        .replace(/[^a-zA-Z0-9]/g, '')
+        .toUpperCase()
+        .slice(0, 6) || 'ITEM';
+    const sku = `AH-${skuBase}-${Date.now().toString().slice(-4)}`;
+    const receivedQty = Math.max(1, line.receivedQty || line.expectedQty || 1);
+    const condition = dto.condition ?? (line.condition === 'DAMAGED' ? 'FAIR' : 'GOOD');
+
+    return this.prisma.$transaction(async (tx) => {
+      const product = await tx.product.create({
+        data: {
+          name: productName,
+          category: dto.category || 'furniture',
+          brand: dto.brand || 'Imported',
+          condition,
+          disposition: line.condition === 'DAMAGED' ? 'DISCOUNTED_SALE' : 'NORMAL_SALE',
+          defectDisclosures: line.condition === 'DAMAGED' ? (line.notes ?? 'Minor transit blemish noted at receiving') : undefined,
+          shipmentId: line.session.shipmentId,
+          isPublished: false,
+          variants: {
+            create: {
+              sku,
+              name: 'Standard',
+              priceCents: 0,
+            },
+          },
+        },
+        include: { variants: true },
+      });
+
+      const variant = product.variants[0];
+      if (line.manifestItemId) {
+        await tx.manifestItem.update({
+          where: { id: line.manifestItemId },
+          data: { variantId: variant.id },
+        });
+      }
+
+      const lot = await tx.stockLot.create({
+        data: {
+          variantId: variant.id,
+          receiptLineId: line.id,
+          quantity: receivedQty,
+          available: 0,
+          held: 0,
+          unavailable: receivedQty,
+          condition,
+        },
+      });
+
+      await tx.inventoryMovement.create({
+        data: {
+          lotId: lot.id,
+          quantity: receivedQty,
+          reason: 'RECEIVING_DRAFT_ONBOARDED',
+          referenceType: 'RECEIVING_LINE',
+          referenceId: line.id,
+          actorId: staffId,
+        },
+      });
+
+      await this.audit.record({
+        actorId: staffId,
+        action: 'PRODUCT_DRAFT_CREATED_FROM_RECEIVING',
+        entityType: 'Product',
+        entityId: product.id,
+        after: {
+          receiptLineId: line.id,
+          shipmentId: line.session.shipmentId,
+          productName,
+          receivedQty,
+        },
+      });
+
+      return { product, variant, stockLot: lot };
+    });
   }
 }

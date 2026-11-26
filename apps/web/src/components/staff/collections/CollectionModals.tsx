@@ -3,7 +3,7 @@
 import { StaffModal } from '@/components/staff/StaffModal';
 import { Button, SearchableSelect } from '@/components/ui';
 import { formatGhs } from '@/lib/staffUtils';
-import { ArrowRight, Info, ShieldCheck } from 'lucide-react';
+import { ArrowRight, CheckCircle2, Info, Printer, ShieldCheck } from 'lucide-react';
 import type { FormEvent } from 'react';
 
 export interface CollectionOrderOption {
@@ -16,10 +16,12 @@ export interface CollectionOrderOption {
 
 export interface CollectionDetailRow {
   reference: string;
+  gatePassCode?: string;
   customer: string;
   date: string;
   collectionStatus: string;
   collectorName: string;
+  collectorPhone?: string;
   quantity: number;
   product: string;
 }
@@ -31,33 +33,96 @@ export function CollectionDetailModal({
   detailRow: CollectionDetailRow | null;
   onClose: () => void;
 }) {
+  const gatePass =
+    detailRow?.gatePassCode ||
+    (detailRow ? `AH-GP-${new Date().getFullYear()}-${detailRow.reference.slice(-6).toUpperCase()}` : '');
+
   return (
-    <StaffModal open={Boolean(detailRow)} label="Collection detail" onClose={onClose}>
+    <StaffModal open={Boolean(detailRow)} label="Warehouse collection & exit gate pass" onClose={onClose}>
       {detailRow && (
         <>
-          <div className="ship-eyebrow">{detailRow.reference}</div>
-          <h2 style={{ marginTop: 6 }}>Collection handover</h2>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+            <span className="ship-eyebrow">{gatePass} · EXIT GATE PASS</span>
+            <span className="acct-pill green">● Cleared for Exit</span>
+          </div>
+          <h2 style={{ marginTop: 6 }}>Warehouse Exit Gate Pass</h2>
           <p className="login-sub">
-            {detailRow.customer} · Collected {detailRow.date}
+            Order {detailRow.reference} · {detailRow.customer} · Issued {detailRow.date}
           </p>
+
+          <div
+            style={{
+              padding: '12px 14px',
+              background: '#f7faf8',
+              border: '1px solid #cce0d4',
+              borderRadius: 4,
+              marginBottom: 14,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+            }}
+          >
+            <CheckCircle2 size={18} color="var(--green)" style={{ flexShrink: 0 }} />
+            <div style={{ fontSize: 12 }}>
+              <strong style={{ display: 'block', color: 'var(--ink)' }}>
+                Gate Pass Code: {gatePass}
+              </strong>
+              <span style={{ color: 'var(--muted)' }}>
+                Security personnel at Tema warehouse exit must verify this pass and collector ID
+                before goods leave the premises.
+              </span>
+            </div>
+          </div>
+
           <dl className="ship-dl">
+            <div className="ship-dl-row">
+              <dt>Gate pass reference</dt>
+              <dd><strong>{gatePass}</strong></dd>
+            </div>
+            <div className="ship-dl-row">
+              <dt>Order reference</dt>
+              <dd>{detailRow.reference}</dd>
+            </div>
+            <div className="ship-dl-row">
+              <dt>Customer</dt>
+              <dd>{detailRow.customer}</dd>
+            </div>
             <div className="ship-dl-row">
               <dt>Status</dt>
               <dd>{detailRow.collectionStatus}</dd>
             </div>
             <div className="ship-dl-row">
-              <dt>Collector / Representative</dt>
-              <dd>{detailRow.collectorName}</dd>
+              <dt>Verified collector / Representative</dt>
+              <dd>
+                {detailRow.collectorName}
+                {detailRow.collectorPhone ? ` (${detailRow.collectorPhone})` : ''}
+              </dd>
             </div>
             <div className="ship-dl-row">
-              <dt>Quantity</dt>
-              <dd>{detailRow.quantity}</dd>
+              <dt>Released quantity</dt>
+              <dd>{detailRow.quantity} {detailRow.quantity === 1 ? 'unit' : 'units'}</dd>
             </div>
             <div className="ship-dl-row">
-              <dt>Notes</dt>
+              <dt>Handover / Item notes</dt>
               <dd>{detailRow.product}</dd>
             </div>
           </dl>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 16 }}>
+            <Button type="button" variant="secondary" onClick={onClose}>
+              Close
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              onClick={() => {
+                if (typeof window !== 'undefined') window.print();
+              }}
+            >
+              <Printer size={14} />
+              <span>Print Gate Pass</span>
+            </Button>
+          </div>
         </>
       )}
     </StaffModal>
@@ -74,12 +139,21 @@ export function RecordCollectionModal({
   unpaidApproved,
   collectorName,
   collectorId,
+  fulfilmentMode,
+  vehiclePlate,
+  releasePin,
+  sendingPin,
+  sentPinHint,
   notes,
   submitting,
   onOrderChange,
   onUnpaidApprovedChange,
   onCollectorNameChange,
   onCollectorIdChange,
+  onFulfilmentModeChange,
+  onVehiclePlateChange,
+  onReleasePinChange,
+  onSendReleasePin,
   onNotesChange,
   onSubmit,
   onClose,
@@ -93,12 +167,21 @@ export function RecordCollectionModal({
   unpaidApproved: boolean;
   collectorName: string;
   collectorId: string;
+  fulfilmentMode?: string;
+  vehiclePlate?: string;
+  releasePin?: string;
+  sendingPin?: boolean;
+  sentPinHint?: string | null;
   notes: string;
   submitting: boolean;
   onOrderChange: (value: string) => void;
   onUnpaidApprovedChange: (checked: boolean) => void;
   onCollectorNameChange: (value: string) => void;
   onCollectorIdChange: (value: string) => void;
+  onFulfilmentModeChange?: (value: string) => void;
+  onVehiclePlateChange?: (value: string) => void;
+  onReleasePinChange?: (value: string) => void;
+  onSendReleasePin?: () => void;
   onNotesChange: (value: string) => void;
   onSubmit: (e: FormEvent) => void;
   onClose: () => void;
@@ -181,7 +264,30 @@ export function RecordCollectionModal({
 
         <div className="req-row-2">
           <label className="login-field">
-            <span>Collector name</span>
+            <span>Fulfilment / Gate Release Mode</span>
+            <select
+              className="staff-field-select"
+              value={fulfilmentMode ?? 'SELF_COLLECTION'}
+              onChange={(e) => onFulfilmentModeChange?.(e.target.value)}
+            >
+              <option value="SELF_COLLECTION">Self-Collection (Customer in person)</option>
+              <option value="CUSTOMER_COURIER">Representative / Customer Truck Driver</option>
+              <option value="WAREHOUSE_DISPATCH">AmericanHomes Delivery Dispatch</option>
+            </select>
+          </label>
+          <label className="login-field">
+            <span>Vehicle License Plate (Optional)</span>
+            <input
+              value={vehiclePlate ?? ''}
+              onChange={(e) => onVehiclePlateChange?.(e.target.value)}
+              placeholder="e.g. GR-4821-24"
+            />
+          </label>
+        </div>
+
+        <div className="req-row-2">
+          <label className="login-field">
+            <span>Collector / Driver name</span>
             <input
               value={collectorName}
               onChange={(e) => onCollectorNameChange(e.target.value)}
@@ -190,14 +296,68 @@ export function RecordCollectionModal({
             />
           </label>
           <label className="login-field">
-            <span>ID / Verification ref</span>
+            <span>Collector Phone / Ghana Card ID</span>
             <input
               value={collectorId}
               onChange={(e) => onCollectorIdChange(e.target.value)}
-              placeholder="Ghana Card / Driver ID"
+              placeholder="Phone or Ghana Card ID"
             />
           </label>
         </div>
+
+        {onSendReleasePin && onReleasePinChange && (
+          <div
+            style={{
+              marginBottom: 12,
+              padding: '10px 12px',
+              background: '#f7faf8',
+              border: '1px solid #cce0d4',
+              borderRadius: 4,
+              display: 'grid',
+              gap: 8,
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <div style={{ fontSize: 12 }}>
+                <strong style={{ display: 'block', color: 'var(--ink)' }}>
+                  Customer 6-Digit Gate Release PIN Verification
+                </strong>
+                <span style={{ color: 'var(--muted)' }}>
+                  Send a release PIN to the customer&apos;s account/phone to verify representative or driver pickup.
+                </span>
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                loading={sendingPin}
+                loadingText="Sending PIN…"
+                disabled={!selectedOrderId || sendingPin}
+                onClick={onSendReleasePin}
+              >
+                Send Release PIN
+              </Button>
+            </div>
+            {sentPinHint && (
+              <div style={{ fontSize: 11.5, color: 'var(--green)', fontWeight: 600 }}>
+                {sentPinHint}
+              </div>
+            )}
+            <input
+              value={releasePin ?? ''}
+              onChange={(e) => onReleasePinChange(e.target.value)}
+              placeholder="Enter 6-digit release PIN presented by collector (optional if customer in person)"
+              maxLength={6}
+              style={{
+                width: '100%',
+                padding: '8px 10px',
+                border: '0.8px solid var(--line)',
+                borderRadius: 3,
+                fontSize: 13,
+                background: '#fff',
+              }}
+            />
+          </div>
+        )}
 
         <label className="login-field">
           <span>Handover notes</span>

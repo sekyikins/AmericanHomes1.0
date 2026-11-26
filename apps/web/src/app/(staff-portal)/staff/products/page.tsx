@@ -2,8 +2,11 @@
 
 import {
   ProductRecordModal,
+  type NewVariantPayload,
   type PreparationStatusLabel,
+  type ProductVariantSummary,
 } from '@/components/staff/products/ProductModals';
+import { StaffModal } from '@/components/staff/StaffModal';
 import {
   ActiveFilterChips,
   HierarchicalFilterDropdown,
@@ -47,6 +50,7 @@ type ProductRecord = {
   defectDisclosure?: string;
   brand: string;
   model: string;
+  variants: ProductVariantSummary[];
 };
 
 function StaffProductsContent() {
@@ -70,6 +74,11 @@ function StaffProductsContent() {
     null,
   );
   const [confirmPublicationToggle, setConfirmPublicationToggle] = useState(false);
+  const [confirmRestartPrep, setConfirmRestartPrep] = useState(false);
+  const [confirmRejectPrice, setConfirmRejectPrice] = useState<{
+    id: string;
+    prodName: string;
+  } | null>(null);
   const [togglingPublication, setTogglingPublication] = useState(false);
   const [restartingPreparation, setRestartingPreparation] = useState(false);
   const [editingPreparationLoading, setEditingPreparationLoading] = useState(false);
@@ -80,37 +89,81 @@ function StaffProductsContent() {
   const [shipment, setShipment] = useState('');
   const [shipmentOptions, setShipmentOptions] = useState<string[]>([]);
   const [initialQuantity, setInitialQuantity] = useState('1');
+  const [initialSize, setInitialSize] = useState('');
+  const [initialColor, setInitialColor] = useState('');
+  const [initialSpec, setInitialSpec] = useState('');
+  const [addingVariant, setAddingVariant] = useState(false);
   const [description, setDescription] = useState('');
   const [brand, setBrand] = useState('');
   const [model, setModel] = useState('');
   const [defectDisclosure, setDefectDisclosure] = useState('');
+  const [pendingPriceApprovals, setPendingPriceApprovals] = useState<
+    Array<{
+      id: string;
+      variantId: string;
+      previousPriceCents?: number | null;
+      proposedPriceCents: number;
+      reason?: string | null;
+      variant?: {
+        sku?: string;
+        product?: { id?: string; name?: string; isPublished?: boolean };
+      } | null;
+    }>
+  >([]);
+  const [decidingApprovalId, setDecidingApprovalId] = useState<string | null>(null);
+  const [pricingQueueModalOpen, setPricingQueueModalOpen] = useState(false);
 
   const loadProducts = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     setLoadError(null);
     try {
-      const rows = (await catalogueApi.listAdmin()) as Array<{
-        id: string;
-        sku?: string;
-        name: string;
-        category?: string;
-        description?: string;
-        brand?: string;
-        model?: string;
-        published?: boolean;
-        isPublished?: boolean;
-        images?: string[];
-        media?: Array<{ url?: string }>;
-        defectDisclosure?: string;
-        completedStageCount?: number;
-        preparationStatus?: 'NOT_STARTED' | 'IN_PROGRESS' | 'PREPARED';
-        preparationSteps?: Array<{ step?: string; status?: string }>;
-        variants?: Array<{
+      const [rows, pendingList] = (await Promise.all([
+        catalogueApi.listAdmin(),
+        catalogueApi.listPriceApprovals('PENDING').catch(() => []),
+      ])) as [
+        Array<{
+          id: string;
           sku?: string;
-          priceCents?: number;
-          stockLots?: Array<{ available?: number }>;
-        }>;
-      }>;
+          name: string;
+          category?: string;
+          description?: string;
+          brand?: string;
+          model?: string;
+          published?: boolean;
+          isPublished?: boolean;
+          images?: string[];
+          media?: Array<{ url?: string }>;
+          defectDisclosure?: string;
+          shipmentId?: string | null;
+          shipmentReference?: string;
+          completedStageCount?: number;
+          preparationStatus?: 'NOT_STARTED' | 'IN_PROGRESS' | 'PREPARED';
+          preparationSteps?: Array<{ step?: string; status?: string }>;
+          variants?: Array<{
+            id?: string;
+            sku?: string;
+            name?: string;
+            priceCents?: number;
+            stockLots?: Array<{ available?: number }>;
+            attributes?: Array<{
+              value?: string;
+              attribute?: { name?: string } | null;
+            }>;
+          }>;
+        }>,
+        Array<{
+          id: string;
+          variantId: string;
+          previousPriceCents?: number | null;
+          proposedPriceCents: number;
+          reason?: string | null;
+          variant?: {
+            sku?: string;
+            product?: { id?: string; name?: string; isPublished?: boolean };
+          } | null;
+        }>,
+      ];
+      setPendingPriceApprovals(Array.isArray(pendingList) ? pendingList : []);
       const mapped: ProductRecord[] = (Array.isArray(rows) ? rows : []).map((r) => {
         const isPub = Boolean(r.isPublished ?? r.published);
         const rawAvailableCount = (r.variants ?? []).reduce(
@@ -148,12 +201,25 @@ function StaffProductsContent() {
         } else {
           preparation = 'Not Started';
         }
+        const variants: ProductVariantSummary[] = (r.variants ?? []).map((v, idx) => ({
+          id: v.id || `${r.id}-v-${idx}`,
+          sku: v.sku || '—',
+          name: v.name || 'Standard',
+          priceCents: v.priceCents ?? 0,
+          available: (v.stockLots ?? []).reduce((ls, lot) => ls + (lot.available ?? 0), 0),
+          attributes: (v.attributes ?? [])
+            .map((a) => ({
+              name: String(a.attribute?.name ?? '').trim(),
+              value: String(a.value ?? '').trim(),
+            }))
+            .filter((a) => a.name && a.value),
+        }));
         return {
           id: r.id,
           identifier: r.variants?.[0]?.sku || r.sku || r.id.slice(-6).toUpperCase(),
           name: r.name,
           category: r.category || 'Uncategorized',
-          shipment: 'Warehouse',
+          shipment: r.shipmentReference || r.shipmentId || 'Warehouse',
           preparation,
           availableCount,
           publication: (r.isPublished ?? r.published) ? 'Published' : 'Draft',
@@ -165,9 +231,13 @@ function StaffProductsContent() {
           defectDisclosure: r.defectDisclosure ?? undefined,
           brand: r.brand ?? '',
           model: r.model ?? '',
+          variants,
         };
       });
       setProducts(mapped);
+      setEditingProduct((prev) =>
+        prev ? mapped.find((item) => item.id === prev.id) ?? prev : null,
+      );
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : 'Unable to load product catalogue.');
     } finally {
@@ -255,6 +325,9 @@ function StaffProductsContent() {
     setCategory('Living room');
     setShipment(shipmentOptions[0] || 'AH-SHP-2026-001');
     setInitialQuantity('1');
+    setInitialSize('');
+    setInitialColor('');
+    setInitialSpec('');
     setDescription('');
     setBrand('');
     setModel('');
@@ -348,13 +421,19 @@ function StaffProductsContent() {
     setSaving(true);
     try {
       if (modalMode === 'create') {
+        const initialAttributes: Record<string, string> = {};
+        if (initialSize.trim()) initialAttributes.Size = initialSize.trim();
+        if (initialColor.trim()) initialAttributes.Color = initialColor.trim();
+        if (initialSpec.trim()) initialAttributes.Material = initialSpec.trim();
         await catalogueApi.createProduct({
           name: name.trim(),
           category: category.toLowerCase().replace(/\s+/g, '-'),
           description: description.trim() || undefined,
           brand: brand.trim() || undefined,
           model: model.trim() || undefined,
+          shipmentId: shipment.trim() || undefined,
           initialQuantity: Math.max(1, Number(initialQuantity) || 1),
+          initialAttributes: Object.keys(initialAttributes).length > 0 ? initialAttributes : undefined,
         });
         setModalMode(null);
         showToast('New product draft created', 'success');
@@ -366,7 +445,8 @@ function StaffProductsContent() {
           description: description.trim() || undefined,
           brand: brand.trim() || undefined,
           model: model.trim() || undefined,
-          defectDisclosure: defectDisclosure.trim() || undefined,
+          shipmentId: shipment.trim() || undefined,
+          defectDisclosures: defectDisclosure.trim() || undefined,
         });
         setModalMode(null);
         showToast('Product record updated', 'success');
@@ -376,6 +456,26 @@ function StaffProductsContent() {
       showToast(err instanceof Error ? err.message : 'Failed to save product', 'error');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleAddVariant = async (payload: NewVariantPayload): Promise<boolean> => {
+    if (!editingProduct || addingVariant) return false;
+    setAddingVariant(true);
+    try {
+      await catalogueApi.createVariant(editingProduct.id, {
+        attributes: payload.attributes,
+        initialQuantity: payload.initialQuantity,
+        priceCents: payload.priceCents,
+      });
+      showToast('Variant added to product', 'success');
+      await loadProducts(true);
+      return true;
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to add variant', 'error');
+      return false;
+    } finally {
+      setAddingVariant(false);
     }
   };
 
@@ -422,11 +522,131 @@ function StaffProductsContent() {
           </p>
         </div>
 
-        <button type="button" className="button primary" onClick={openCreate}>
-          <Plus size={15} />
-          <span>Create product draft</span>
-        </button>
+        <div className="dash-actions">
+          {pendingPriceApprovals.length > 0 && (
+            <button
+              type="button"
+              className="button"
+              style={{
+                background: '#fffbeb',
+                borderColor: '#f59e0b',
+                color: '#92400e',
+                fontWeight: 600,
+              }}
+              onClick={() => setPricingQueueModalOpen(true)}
+            >
+              <span>Pending price approvals</span>
+              <span
+                style={{
+                  background: '#d97706',
+                  color: '#fff',
+                  borderRadius: 999,
+                  padding: '1px 7px',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  marginLeft: 4,
+                }}
+              >
+                {pendingPriceApprovals.length}
+              </span>
+            </button>
+          )}
+          <button type="button" className="button primary" onClick={openCreate}>
+            <Plus size={15} />
+            <span>Create product draft</span>
+          </button>
+        </div>
       </div>
+
+      <StaffModal
+        open={pricingQueueModalOpen}
+        label="Pending price approvals"
+        onClose={() => setPricingQueueModalOpen(false)}
+      >
+        <span className="ship-eyebrow" style={{ color: 'var(--green)' }}>
+          DUAL-CONTROL PRICING QUEUE ({pendingPriceApprovals.length} PENDING)
+        </span>
+        <h2 style={{ marginTop: 6 }}>Pending price approvals</h2>
+        <p className="login-sub">
+          Approve or reject proposed retail prices and floor-aging markdowns. Approving a price
+          drop automatically notifies customers who saved the item in their Wishlist.
+        </p>
+        {pendingPriceApprovals.length === 0 ? (
+          <p style={{ fontSize: 13, color: 'var(--muted)' }}>
+            All price proposals have been reviewed.
+          </p>
+        ) : (
+          <div style={{ display: 'grid', gap: 10, maxHeight: '60vh', overflowY: 'auto' }}>
+            {pendingPriceApprovals.map((pa) => {
+              const prodName = pa.variant?.product?.name || pa.variant?.sku || 'Product variant';
+              const prevGhs = ((pa.previousPriceCents ?? 0) / 100).toLocaleString();
+              const propGhs = (pa.proposedPriceCents / 100).toLocaleString();
+              return (
+                <div
+                  key={pa.id}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: 10,
+                    padding: '10px 12px',
+                    background: '#f9faf9',
+                    border: '1px solid #dce8e0',
+                    borderRadius: 4,
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <div style={{ fontSize: 12.5 }}>
+                    <strong>{prodName}</strong> ·{' '}
+                    <span style={{ color: 'var(--muted)' }}>
+                      GHS {prevGhs} → <strong style={{ color: 'var(--green)' }}>GHS {propGhs}</strong>
+                    </span>
+                    {pa.reason && (
+                      <small style={{ display: 'block', color: 'var(--muted)', marginTop: 2 }}>
+                        {pa.reason}
+                      </small>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button
+                      type="button"
+                      className="button primary"
+                      disabled={decidingApprovalId === pa.id}
+                      style={{ minHeight: 28, padding: '0 10px', fontSize: 11.5 }}
+                      onClick={async () => {
+                        setDecidingApprovalId(pa.id);
+                        try {
+                          await catalogueApi.approvePrice(pa.id);
+                          showToast(`Approved GHS ${propGhs} for ${prodName}`, 'success');
+                          await loadProducts(true);
+                        } catch (err) {
+                          showToast(
+                            err instanceof Error ? err.message : 'Unable to approve price',
+                            'error',
+                          );
+                        } finally {
+                          setDecidingApprovalId(null);
+                        }
+                      }}
+                    >
+                      Approve
+                    </button>
+                    <button
+                      type="button"
+                      className="button"
+                      disabled={decidingApprovalId === pa.id}
+                      style={{ minHeight: 28, padding: '0 10px', fontSize: 11.5 }}
+                      onClick={() => setConfirmRejectPrice({ id: pa.id, prodName })}
+                    >
+                      Reject
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </StaffModal>
 
       <div className="staff-toolbar">
         <label className="staff-search-box">
@@ -514,7 +734,14 @@ function StaffProductsContent() {
                 />
                 <div>
                   <strong>{p.name}</strong>
-                  <small>{p.category}</small>
+                  <small>
+                    {p.category}
+                    {p.variants.length > 1
+                      ? ` · ${p.variants.length} variants`
+                      : p.variants[0] && p.variants[0].name !== 'Standard'
+                        ? ` · ${p.variants[0].name}`
+                        : ''}
+                  </small>
                 </div>
               </div>
               <span className="staff-cell-text">{p.identifier}</span>
@@ -554,16 +781,21 @@ function StaffProductsContent() {
         editingPublication={editingProduct?.publication}
         editingPreparation={editingProduct?.preparation}
         editingAvailableCount={editingProduct?.availableCount}
+        editingVariants={editingProduct?.variants ?? []}
         name={name}
         category={category}
         shipment={shipment}
         shipmentOptions={shipmentOptions}
         initialQuantity={initialQuantity}
+        initialSize={initialSize}
+        initialColor={initialColor}
+        initialSpec={initialSpec}
         description={description}
         brand={brand}
         model={model}
         defectDisclosure={defectDisclosure}
         saving={saving}
+        addingVariant={addingVariant}
         togglingPublication={togglingPublication}
         restartingPreparation={restartingPreparation}
         editingPreparationLoading={editingPreparationLoading}
@@ -571,14 +803,18 @@ function StaffProductsContent() {
         onCategoryChange={setCategory}
         onShipmentChange={setShipment}
         onInitialQuantityChange={setInitialQuantity}
+        onInitialSizeChange={setInitialSize}
+        onInitialColorChange={setInitialColor}
+        onInitialSpecChange={setInitialSpec}
         onDescriptionChange={setDescription}
         onBrandChange={setBrand}
         onModelChange={setModel}
         onDefectDisclosureChange={setDefectDisclosure}
+        onAddVariant={handleAddVariant}
         onRequestTogglePublication={() => setConfirmPublicationToggle(true)}
         onOpenPreparation={handleOpenPreparation}
         onEditPreparation={handleEditPreparation}
-        onRestartPreparation={handleRestartPreparation}
+        onRestartPreparation={() => setConfirmRestartPrep(true)}
         onSubmit={handleSubmit}
         onClose={() => setModalMode(null)}
       />
@@ -606,6 +842,52 @@ function StaffProductsContent() {
         loading={togglingPublication}
         onCancel={() => setConfirmPublicationToggle(false)}
         onConfirm={handleTogglePublication}
+      />
+
+      <ConfirmDialog
+        open={confirmRestartPrep && Boolean(editingProduct)}
+        title="Restart preparation?"
+        targetName={editingProduct?.name}
+        description="This will clear all completed preparation steps, reset the price to GHS 0, unpublish the item from the storefront, and return it to the Preparation queue."
+        reversible={false}
+        destructive={true}
+        confirmLabel="Restart preparation"
+        loading={restartingPreparation}
+        onCancel={() => setConfirmRestartPrep(false)}
+        onConfirm={async () => {
+          setConfirmRestartPrep(false);
+          await handleRestartPreparation();
+        }}
+      />
+
+      <ConfirmDialog
+        open={Boolean(confirmRejectPrice)}
+        title="Reject price proposal?"
+        targetName={confirmRejectPrice?.prodName}
+        description="This will reject the proposed retail price and restore the previous approved price."
+        reversible={false}
+        destructive={true}
+        confirmLabel="Reject proposal"
+        loading={Boolean(confirmRejectPrice && decidingApprovalId === confirmRejectPrice.id)}
+        onCancel={() => setConfirmRejectPrice(null)}
+        onConfirm={async () => {
+          const target = confirmRejectPrice;
+          if (!target) return;
+          setDecidingApprovalId(target.id);
+          try {
+            await catalogueApi.rejectPrice(target.id, 'Rejected by manager');
+            showToast(`Rejected price proposal for ${target.prodName}`, 'warning');
+            setConfirmRejectPrice(null);
+            await loadProducts(true);
+          } catch (err) {
+            showToast(
+              err instanceof Error ? err.message : 'Unable to reject price',
+              'error',
+            );
+          } finally {
+            setDecidingApprovalId(null);
+          }
+        }}
       />
     </div>
   );

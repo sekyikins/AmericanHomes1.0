@@ -6,12 +6,14 @@ const CART_STORAGE_KEY = 'ah_cart_items';
 
 export type CartItem = {
   id: string;
+  productId?: string;
   name: string;
   category: string;
   variant: string;
   pricePesewas: number;
   image: string;
   defectDisclosures?: string | null;
+  maxQty?: number;
 };
 
 type CartContextValue = {
@@ -72,7 +74,15 @@ export function CartProvider({ children }: { children: ReactNode }) {
   }, [items, hydrated]);
 
   const addItem = (item: CartItem) => {
-    setItems((prev) => [...prev, item]);
+    setItems((prev) => {
+      const existingCount = prev.filter(
+        (x) => x.id === item.id && x.variant === item.variant,
+      ).length;
+      if (typeof item.maxQty === 'number' && item.maxQty > 0 && existingCount >= item.maxQty) {
+        return prev;
+      }
+      return [...prev, item];
+    });
   };
 
   const removeItem = (index: number) => {
@@ -89,7 +99,11 @@ export function CartProvider({ children }: { children: ReactNode }) {
       const sample = prev.find((item) => item.id === id && item.variant === variant);
       const others = prev.filter((item) => !(item.id === id && item.variant === variant));
       if (!sample || qty === 0) return others;
-      return [...others, ...Array.from({ length: qty }, () => sample)];
+      const cappedQty =
+        typeof sample.maxQty === 'number' && sample.maxQty > 0
+          ? Math.min(qty, sample.maxQty)
+          : qty;
+      return [...others, ...Array.from({ length: cappedQty }, () => sample)];
     });
   };
 

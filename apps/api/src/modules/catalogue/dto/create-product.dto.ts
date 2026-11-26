@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Min } from 'class-validator';
+import { IsIn, IsInt, IsNotEmpty, IsObject, IsOptional, IsString, Min } from 'class-validator';
 
 export class CreateProductDto {
   @ApiProperty({ description: 'Product display name', example: 'Ashley Leather Recliner Sofa' })
@@ -57,4 +57,17 @@ export class CreateProductDto {
   @IsInt()
   @Min(0)
   initialQuantity?: number;
+
+  @ApiPropertyOptional({ description: 'Optional initial variant display name', example: 'Small / Red' })
+  @IsOptional()
+  @IsString()
+  initialVariantName?: string;
+
+  @ApiPropertyOptional({
+    description: 'Optional structured variant attributes (e.g. { Size: "Small", Color: "Red" })',
+    example: { Size: 'Small', Color: 'Red' },
+  })
+  @IsOptional()
+  @IsObject()
+  initialAttributes?: Record<string, string>;
 }

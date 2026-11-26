@@ -67,6 +67,31 @@ export function DemandWorkspace({
   const [shipments, setShipments] = useState<Array<{ id: string; reference: string }>>([]);
   const [variants, setVariants] = useState<Array<{ id: string; label: string }>>([]);
   const [requestOptions, setRequestOptions] = useState<Array<{ id: string; label: string }>>([]);
+  const [restockRecs, setRestockRecs] = useState<
+    Array<{
+      variantId: string;
+      productName: string;
+      category: string;
+      priorityTier: 'HIGH' | 'MEDIUM' | 'EMERGING';
+      recommendedQty: number;
+      dominantChannel: string;
+      rationale: string;
+    }>
+  >([]);
+  const [markdownRecs, setMarkdownRecs] = useState<
+    Array<{
+      variantId: string;
+      productName: string;
+      availableStock: number;
+      daysOnFloor: number;
+      wishlistSaves: number;
+      currentPriceCents: number;
+      suggestedPriceCents: number;
+      markdownPct: number;
+      reason: string;
+    }>
+  >([]);
+  const [proposingMarkdownId, setProposingMarkdownId] = useState<string | null>(null);
 
   // Create modal fields
   const [newProduct, setNewProduct] = useState('');
@@ -112,10 +137,15 @@ export function DemandWorkspace({
         setItems(mapped);
         if (mapped[0]) setSelectedId((prev) => prev || mapped[0].id);
       } else if (mode === 'sourcing') {
-        const [res, shpList] = await Promise.all([
+        const [res, shpList, recData] = await Promise.all([
           sourcingApi.list(),
           shipmentsApi.list().catch(() => []),
+          sourcingApi.recommendations().catch(() => null),
         ]);
+        if (recData) {
+          setRestockRecs(recData.restockRecommendations ?? []);
+          setMarkdownRecs(recData.markdownCandidates ?? []);
+        }
         const typedShp = (Array.isArray(shpList) ? shpList : []) as Array<{
           id: string;
           reference: string;
@@ -353,6 +383,163 @@ export function DemandWorkspace({
           <span>{cfg.cta}</span>
         </button>
       </div>
+
+      {mode === 'sourcing' && (restockRecs.length > 0 || markdownRecs.length > 0) && (
+        <section
+          className="ship-card"
+          style={{
+            marginBottom: 16,
+            background: '#f7faf8',
+            border: '1px solid #d5e5dc',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+            <div>
+              <span className="ship-eyebrow">PREDICTIVE DEMAND &amp; FLOOR AGING INTELLIGENCE</span>
+              <h3 style={{ fontSize: 16, marginTop: 4 }}>
+                Storefront + Walk-in Shipment &amp; Markdown Recommendations
+              </h3>
+            </div>
+          </div>
+
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
+              gap: 14,
+              marginTop: 12,
+            }}
+          >
+            {restockRecs.length > 0 && (
+              <div
+                style={{
+                  background: '#fff',
+                  border: '0.8px solid var(--line)',
+                  borderRadius: 4,
+                  padding: 12,
+                }}
+              >
+                <strong style={{ display: 'block', fontSize: 12.5, color: 'var(--ink)', marginBottom: 8 }}>
+                  Top Predicted Restocks for Next Shipment ({restockRecs.length})
+                </strong>
+                <div style={{ display: 'grid', gap: 8 }}>
+                  {restockRecs.slice(0, 4).map((rec) => (
+                    <div
+                      key={rec.variantId}
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        gap: 8,
+                        paddingBottom: 8,
+                        borderBottom: '0.8px solid var(--line)',
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                          <strong style={{ fontSize: 12.5 }}>{rec.productName}</strong>
+                          <span className={`acct-pill ${rec.priorityTier === 'HIGH' ? 'green' : 'amber'}`} style={{ fontSize: 10 }}>
+                            ● {rec.priorityTier}
+                          </span>
+                          <span className="acct-pill blue" style={{ fontSize: 10 }}>
+                            {rec.dominantChannel}
+                          </span>
+                        </div>
+                        <small style={{ color: 'var(--muted)', fontSize: 11, display: 'block', marginTop: 2 }}>
+                          {rec.rationale}
+                        </small>
+                      </div>
+                      <button
+                        type="button"
+                        className="button"
+                        style={{ minHeight: 30, padding: '0 10px', fontSize: 11.5, background: '#fff' }}
+                        onClick={() => {
+                          setNewProduct(rec.productName);
+                          setNewQty(String(rec.recommendedQty));
+                          setNewDesc(rec.rationale);
+                          setModalOpen(true);
+                        }}
+                      >
+                        + Source {rec.recommendedQty} units
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {markdownRecs.length > 0 && (
+              <div
+                style={{
+                  background: '#fff',
+                  border: '0.8px solid var(--line)',
+                  borderRadius: 4,
+                  padding: 12,
+                }}
+              >
+                <strong style={{ display: 'block', fontSize: 12.5, color: 'var(--ink)', marginBottom: 8 }}>
+                  Floor Aging &amp; Dynamic Markdown Candidates ({markdownRecs.length})
+                </strong>
+                <div style={{ display: 'grid', gap: 8 }}>
+                  {markdownRecs.slice(0, 4).map((m) => (
+                    <div
+                      key={m.variantId}
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        gap: 8,
+                        paddingBottom: 8,
+                        borderBottom: '0.8px solid var(--line)',
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <strong style={{ fontSize: 12.5, display: 'block' }}>{m.productName}</strong>
+                        <small style={{ color: 'var(--muted)', fontSize: 11 }}>
+                          {m.reason} · Current: GHS {(m.currentPriceCents / 100).toLocaleString()} → Suggested: GHS {(m.suggestedPriceCents / 100).toLocaleString()} (-{m.markdownPct}%)
+                        </small>
+                      </div>
+                      <button
+                        type="button"
+                        className="button"
+                        disabled={proposingMarkdownId === m.variantId}
+                        style={{ minHeight: 30, padding: '0 10px', fontSize: 11.5, background: '#fff' }}
+                        onClick={async () => {
+                          setProposingMarkdownId(m.variantId);
+                          try {
+                            await catalogueApi.proposePrice(m.variantId, {
+                              proposedPriceCents: m.suggestedPriceCents,
+                              reason: `Dynamic ${m.markdownPct}% floor-aging markdown (${m.availableStock} units in stock)`,
+                            });
+                            showToast(
+                              `Proposed ${m.markdownPct}% markdown for ${m.productName}`,
+                              'success',
+                            );
+                            await loadData(true);
+                          } catch (err) {
+                            showToast(
+                              err instanceof Error ? err.message : 'Unable to propose markdown',
+                              'error',
+                            );
+                          } finally {
+                            setProposingMarkdownId(null);
+                          }
+                        }}
+                      >
+                        {proposingMarkdownId === m.variantId
+                          ? 'Proposing…'
+                          : `Propose -${m.markdownPct}% markdown`}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       <div className="demand-split">
         <div>

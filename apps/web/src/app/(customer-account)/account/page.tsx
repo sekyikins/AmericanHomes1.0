@@ -5,6 +5,7 @@ import {
   Bell,
   Clock,
   FileText,
+  Heart,
   Settings,
   ShoppingBag,
 } from 'lucide-react';
@@ -23,9 +24,11 @@ import {
 } from '@/lib/customerAccount';
 import { formatGHS } from '@/lib/formatting/currency';
 import { useAuth } from '@/store/auth.store';
+import { useWishlist } from '@/store/wishlist.store';
 
 export default function AccountOverviewPage() {
   const { user } = useAuth();
+  const { count: wishlistCount } = useWishlist();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -129,6 +132,16 @@ export default function AccountOverviewPage() {
               <div>
                 <strong>{unreadCount}</strong>
                 <span>{unreadCount === 1 ? 'Unread update' : 'Unread updates'}</span>
+              </div>
+            </Link>
+
+            <Link href="/wishlist" className="acct-stat-card">
+              <span className="acct-stat-icon">
+                <Heart size={17} />
+              </span>
+              <div>
+                <strong>{wishlistCount}</strong>
+                <span>{wishlistCount === 1 ? 'Saved item' : 'Saved items'}</span>
               </div>
             </Link>
 

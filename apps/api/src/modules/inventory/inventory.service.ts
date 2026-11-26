@@ -71,25 +71,52 @@ export class InventoryService {
       const available = v.stockLots.reduce((s, l) => s + l.available, 0);
       const held = v.stockLots.reduce((s, l) => s + l.held, 0);
       const unavailable = v.stockLots.reduce((s, l) => s + l.unavailable, 0);
+      const primaryLot = v.stockLots[0];
       return {
         id: v.id,
         sku: v.sku,
         variantName: v.name ?? v.sku,
         productId: v.productId,
         productName: v.product?.name ?? 'Product',
+        boxCount: v.product?.boxCount ?? 1,
         isPublished: Boolean(v.product?.isPublished),
         disposition: v.product?.disposition ?? 'NORMAL_SALE',
         image: v.product?.media?.[0]?.url ?? '/images/sofa.avif',
-        condition: v.stockLots[0]?.condition ?? 'GOOD',
+        condition: primaryLot?.condition ?? 'GOOD',
         physical,
         available,
         held,
         unavailable,
-        lotRef: v.stockLots[0]?.id ? `LOT-${v.stockLots[0].id.slice(-6).toUpperCase()}` : '—',
+        lotId: primaryLot?.id ?? null,
+        lotRef: primaryLot?.id ? `LOT-${primaryLot.id.slice(-6).toUpperCase()}` : '—',
+        binLocation: primaryLot?.binLocation ?? null,
+        abcClass: primaryLot?.abcClass ?? 'B',
+        landedUnitCostCents: primaryLot?.landedUnitCostCents ?? 0,
       };
     });
 
-    return { items, adjustments };
+    const variantLabelById = new Map(
+      variants.map((v) => [
+        v.id,
+        {
+          productName: v.product?.name ?? 'Product',
+          variantName: v.name ?? v.sku,
+          sku: v.sku,
+        },
+      ]),
+    );
+
+    const enrichedAdjustments = adjustments.map((a) => {
+      const info = variantLabelById.get(a.variantId);
+      return {
+        ...a,
+        productName: info?.productName ?? null,
+        variantName: info?.variantName ?? null,
+        sku: info?.sku ?? null,
+      };
+    });
+
+    return { items, adjustments: enrichedAdjustments };
   }
 
   async getBalance(variantId: string) {
@@ -142,25 +169,179 @@ export class InventoryService {
       if (hold.status !== 'ACTIVE') return hold;
 
       for (const line of hold.lines) {
-        await tx.stockLot.update({
-          where: { id: line.lotId },
-          data: { held: { decrement: line.quantity }, quantity: { decrement: line.quantity } },
-        });
-        await tx.inventoryMovement.create({
-          data: {
-            lotId: line.lotId,
-            quantity: -line.quantity,
-            reason: `SALE_CONSUMED:${hold.reason}`,
-            referenceType: hold.referenceType,
-            referenceId: hold.referenceId,
-            actorId,
-          },
-        });
+        const lot = await tx.stockLot.findUnique({ where: { id: line.lotId } });
+        const deductHeld = lot ? Math.min(lot.held, line.quantity) : line.quantity;
+        const deductQty = lot ? Math.min(lot.quantity, line.quantity) : line.quantity;
+        if (deductHeld > 0 || deductQty > 0) {
+          await tx.stockLot.update({
+            where: { id: line.lotId },
+            data: {
+              held: { decrement: deductHeld },
+              quantity: { decrement: deductQty },
+            },
+          });
+          await tx.inventoryMovement.create({
+            data: {
+              lotId: line.lotId,
+              quantity: -deductQty,
+              reason: `SALE_CONSUMED:${hold.reason}`,
+              referenceType: hold.referenceType,
+              referenceId: hold.referenceId,
+              actorId,
+            },
+          });
+        }
       }
       return tx.stockHold.update({
         where: { id: holdId },
         data: { status: 'CONSUMED', releasedAt: new Date() },
       });
+    });
+  }
+
+  async consumeOrderQuantity(
+    orderId: string,
+    variantId: string,
+    quantityToConsume: number,
+    actorId?: string,
+  ) {
+    if (quantityToConsume <= 0) return { consumed: 0 };
+    return this.prisma.$transaction(async (tx) => {
+      const holds = await tx.stockHold.findMany({
+        where: {
+          referenceId: orderId,
+          referenceType: { in: ['ORDER', 'CHECKOUT_ORDER', 'SALES_ORDER', 'RESERVATION'] },
+          status: 'ACTIVE',
+        },
+        include: { lines: true },
+        orderBy: { createdAt: 'asc' },
+      });
+
+      let remaining = quantityToConsume;
+      for (const hold of holds) {
+        if (remaining <= 0) break;
+        for (const line of hold.lines) {
+          if (remaining <= 0) break;
+          if (line.variantId !== variantId || line.quantity <= 0) continue;
+
+          const take = Math.min(line.quantity, remaining);
+          const lot = await tx.stockLot.findUnique({ where: { id: line.lotId } });
+          if (lot) {
+            const deductHeld = Math.min(lot.held, take);
+            const deductQty = Math.min(lot.quantity, take);
+            await tx.stockLot.update({
+              where: { id: lot.id },
+              data: {
+                held: { decrement: deductHeld },
+                quantity: { decrement: deductQty },
+              },
+            });
+            await tx.inventoryMovement.create({
+              data: {
+                lotId: lot.id,
+                quantity: -deductQty,
+                reason: 'COLLECTION_GATE_CONSUMED',
+                referenceType: 'ORDER',
+                referenceId: orderId,
+                actorId,
+              },
+            });
+          }
+
+          const newLineQty = line.quantity - take;
+          await tx.stockHoldLine.update({
+            where: { id: line.id },
+            data: { quantity: newLineQty },
+          });
+          remaining -= take;
+        }
+
+        const updatedLines = await tx.stockHoldLine.findMany({
+          where: { holdId: hold.id },
+        });
+        if (updatedLines.every((l) => l.quantity <= 0)) {
+          await tx.stockHold.update({
+            where: { id: hold.id },
+            data: { status: 'CONSUMED', releasedAt: new Date() },
+          });
+        }
+      }
+
+      // Fallback if hold was already marked CONSUMED earlier without decrementing physical stock
+      if (remaining > 0) {
+        const fallbackLot = await tx.stockLot.findFirst({
+          where: { variantId, held: { gt: 0 } },
+          orderBy: { createdAt: 'asc' },
+        });
+        if (fallbackLot) {
+          const take = Math.min(fallbackLot.held, remaining);
+          await tx.stockLot.update({
+            where: { id: fallbackLot.id },
+            data: {
+              held: { decrement: take },
+              quantity: { decrement: Math.min(fallbackLot.quantity, take) },
+            },
+          });
+          await tx.inventoryMovement.create({
+            data: {
+              lotId: fallbackLot.id,
+              quantity: -take,
+              reason: 'COLLECTION_GATE_CONSUMED',
+              referenceType: 'ORDER',
+              referenceId: orderId,
+              actorId,
+            },
+          });
+          remaining -= take;
+        }
+      }
+
+      return { consumed: quantityToConsume - remaining };
+    });
+  }
+
+  async receiveReturnedToUnavailable(
+    variantId: string,
+    quantity: number,
+    returnId: string,
+    actorId?: string,
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      let lot = await tx.stockLot.findFirst({
+        where: { variantId },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (!lot) {
+        lot = await tx.stockLot.create({
+          data: {
+            variantId,
+            quantity,
+            available: 0,
+            held: 0,
+            unavailable: quantity,
+            condition: 'GOOD',
+          },
+        });
+      } else {
+        lot = await tx.stockLot.update({
+          where: { id: lot.id },
+          data: {
+            quantity: { increment: quantity },
+            unavailable: { increment: quantity },
+          },
+        });
+      }
+      await tx.inventoryMovement.create({
+        data: {
+          lotId: lot.id,
+          quantity,
+          reason: `RETURN_TO_INSPECTION:${returnId}`,
+          referenceType: 'RETURN_REQUEST',
+          referenceId: returnId,
+          actorId,
+        },
+      });
+      return lot;
     });
   }
 
@@ -291,6 +472,13 @@ export class InventoryService {
 
   async releaseHold(holdId: string, actorId?: string) {
     return this.prisma.$transaction(async (tx) => {
+      // Atomically claim the ACTIVE -> RELEASED transition so concurrent callers
+      // can never double-release the same hold or push StockLot.held negative.
+      const claimed = await tx.stockHold.updateMany({
+        where: { id: holdId, status: 'ACTIVE' },
+        data: { status: 'RELEASED', releasedAt: new Date() },
+      });
+
       const hold = await tx.stockHold.findUnique({
         where: { id: holdId },
         include: { lines: true },
@@ -298,7 +486,7 @@ export class InventoryService {
       if (!hold) {
         throw new NotFoundException(`StockHold ${holdId} not found`);
       }
-      if (hold.status !== 'ACTIVE') {
+      if (claimed.count === 0) {
         return hold;
       }
 
@@ -323,10 +511,7 @@ export class InventoryService {
         });
       }
 
-      return tx.stockHold.update({
-        where: { id: holdId },
-        data: { status: 'RELEASED', releasedAt: new Date() },
-      });
+      return hold;
     });
   }
 }

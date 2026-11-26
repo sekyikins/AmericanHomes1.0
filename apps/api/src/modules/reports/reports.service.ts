@@ -17,7 +17,7 @@ export class ReportsService {
   }
 
   async getFinancialSummary() {
-    const [orders, verifiedPayments, refunds, shipmentExpenses, generalExpenses] =
+    const [orders, verifiedPayments, refunds, shipmentExpenses, generalExpenses, lots] =
       await Promise.all([
         this.prisma.salesOrder.aggregate({
           where: { orderStatus: { not: 'CANCELLED' } },
@@ -33,8 +33,16 @@ export class ReportsService {
         }),
         this.prisma.shipmentExpense.aggregate({ _sum: { amountCents: true } }),
         this.prisma.generalExpense.aggregate({ _sum: { amountCents: true } }),
+        this.prisma.stockLot.findMany({
+          where: { quantity: { gt: 0 }, landedUnitCostCents: { gt: 0 } },
+          select: { quantity: true, landedUnitCostCents: true },
+        }),
       ]);
 
+    const inventoryValuationCents = lots.reduce(
+      (s, l) => s + l.quantity * l.landedUnitCostCents,
+      0,
+    );
     const salesValueCents = orders._sum.totalCents ?? 0;
     const verifiedPaymentsCents = verifiedPayments._sum.amountCents ?? 0;
     return {
@@ -44,6 +52,7 @@ export class ReportsService {
       refundsCents: refunds._sum.amountCents ?? 0,
       shipmentExpensesCents: shipmentExpenses._sum.amountCents ?? 0,
       generalExpensesCents: generalExpenses._sum.amountCents ?? 0,
+      inventoryValuationCents,
       generatedAt: new Date().toISOString(),
     };
   }
@@ -65,6 +74,25 @@ export class ReportsService {
     const shipmentExpensesCents = shipment.expenses.reduce((s, e) => s + e.amountCents, 0);
     const hasIncompleteCosts = manifestItems.some((i) => i.unitCostCents <= 0) || manifestItems.length === 0;
     const estimatedAcquisitionCents = manifestItems.reduce((s, i) => s + i.quantity * i.unitCostCents, 0);
+    const landedCostTotalCents = estimatedAcquisitionCents + shipmentExpensesCents;
+
+    const variantIds = Array.from(
+      new Set(manifestItems.map((i) => i.variantId).filter((v): v is string => Boolean(v))),
+    );
+    const linkedOrderLines = variantIds.length
+      ? await this.prisma.orderLine.findMany({
+          where: {
+            variantId: { in: variantIds },
+            order: { orderStatus: { not: 'CANCELLED' } },
+          },
+          select: { quantity: true, unitPriceCents: true, discountCents: true },
+        })
+      : [];
+    const realizedRevenueCents = linkedOrderLines.reduce(
+      (s, l) => s + l.quantity * l.unitPriceCents - (l.discountCents ?? 0),
+      0,
+    );
+    const estimatedGrossMarginCents = realizedRevenueCents - landedCostTotalCents;
 
     return {
       shipmentId: shipment.id,
@@ -73,10 +101,13 @@ export class ReportsService {
       receivedUnits,
       shipmentExpensesCents,
       estimatedAcquisitionCents,
+      landedCostTotalCents,
+      realizedRevenueCents,
+      estimatedGrossMarginCents,
       isEstimatedProfit: true,
       costCompletenessWarning: hasIncompleteCosts
         ? 'Acquisition cost data is incomplete; profitability figures are estimates only.'
-        : 'Estimated shipment performance based on recorded manifest costs and direct shipment expenses.',
+        : 'Estimated shipment performance based on recorded manifest costs, direct shipment expenses, and linked order revenue.',
       generatedAt: new Date().toISOString(),
     };
   }

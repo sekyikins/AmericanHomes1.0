@@ -82,15 +82,69 @@ export class AllocationsService {
     if (!offer) throw new NotFoundException(`AllocationOffer ${offerId} not found`);
 
     if (accept) {
-      const updated = await this.prisma.allocationOffer.update({
-        where: { id: offerId },
-        data: { status: 'ACCEPTED', respondedAt: new Date() },
+      const approvedHoursSetting = await this.prisma.systemSetting.findUnique({
+        where: { key: 'APPROVED_RESERVATION_HOURS' },
       });
-      await this.prisma.productRequest.update({
-        where: { id: offer.requestId },
-        data: { status: 'FULFILLED' },
+      const approvedHours =
+        approvedHoursSetting && Number(approvedHoursSetting.value) > 0
+          ? Number(approvedHoursSetting.value)
+          : 48;
+      const reservationExpiresAt = new Date(Date.now() + approvedHours * 60 * 60 * 1000);
+
+      const result = await this.prisma.$transaction(async (tx) => {
+        const updatedOffer = await tx.allocationOffer.update({
+          where: { id: offerId },
+          data: { status: 'ACCEPTED', respondedAt: new Date() },
+        });
+        await tx.productRequest.update({
+          where: { id: offer.requestId },
+          data: { status: 'FULFILLED' },
+        });
+
+        let createdReservation = null;
+        if (offer.variantId && offer.request?.customerId) {
+          createdReservation = await tx.reservation.create({
+            data: {
+              customerId: offer.request.customerId,
+              variantId: offer.variantId,
+              quantity: offer.quantity,
+              source: 'ONLINE',
+              status: 'APPROVED',
+              approvedBy: userId,
+              approvedAt: new Date(),
+              expiresAt: reservationExpiresAt,
+              notes: `Auto-reserved from accepted allocation offer ALC-${offer.id.slice(-6).toUpperCase()}`,
+            },
+          });
+
+          // Transfer the allocation stock hold to the new approved reservation
+          await tx.stockHold.updateMany({
+            where: {
+              referenceType: 'ALLOCATION_OFFER',
+              referenceId: offerId,
+              status: 'ACTIVE',
+            },
+            data: {
+              referenceType: 'RESERVATION',
+              referenceId: createdReservation.id,
+              reason: 'ALLOCATION_OFFER_ACCEPTED_RESERVATION',
+            },
+          });
+        }
+        return { offer: updatedOffer, reservation: createdReservation };
       });
-      return updated;
+
+      await this.audit.record({
+        actorId: userId,
+        action: 'ALLOCATION_OFFER_ACCEPTED',
+        entityType: 'AllocationOffer',
+        entityId: offerId,
+        after: {
+          status: 'ACCEPTED',
+          reservationId: result.reservation?.id ?? null,
+        },
+      });
+      return result.offer;
     }
 
     // Declined -> release hold and automatically offer to next eligible customer (§4.3.8)

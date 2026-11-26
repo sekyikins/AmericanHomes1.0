@@ -1,15 +1,34 @@
 'use client';
 
-import { ArrowRight, Minus, Plus, ShieldCheck, ShoppingBag, X } from 'lucide-react';
+import { ArrowRight, Heart, Minus, Plus, ShieldCheck, ShoppingBag, X } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 import { formatGHS } from '@/lib/formatting/currency';
+import { useToast } from '@/providers/toast.provider';
 import { useCart, type CartItem } from '@/store/cart.store';
+import { useWishlist } from '@/store/wishlist.store';
 
 export function BagPanel({ onClose }: { onClose?: () => void }) {
   const router = useRouter();
+  const { showToast } = useToast();
   const { items, setLineQuantity, removeLine, subtotalPesewas, setBagOpen } = useCart();
+  const { count: wishlistCount, saveItem } = useWishlist();
+
+  const handleSaveForLater = async (item: CartItem) => {
+    const targetProductId = item.productId ?? item.id;
+    await saveItem(
+      {
+        productId: targetProductId,
+        variantId: item.id,
+        priceAtSavePesewas: item.pricePesewas,
+        name: item.name,
+      },
+      true,
+    );
+    removeLine(item.id, item.variant);
+    showToast(`Saved ${item.name} to your wishlist for later`, 'info');
+  };
 
   const itemCount = items.length;
   const itemLabel = itemCount === 1 ? '1 item ready for you' : `${itemCount} items ready for you`;
@@ -65,15 +84,27 @@ export function BagPanel({ onClose }: { onClose?: () => void }) {
               </span>
               <strong>Your bag is empty</strong>
               <p>Explore our available products to get started.</p>
-              <Link
-                href="/shop"
-                className="button primary"
-                style={{ marginTop: 14 }}
-                onClick={() => onClose?.()}
-              >
-                <span>Browse shop</span>
-                <ArrowRight size={15} />
-              </Link>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center', marginTop: 14 }}>
+                <Link
+                  href="/shop"
+                  className="button primary"
+                  onClick={() => onClose?.()}
+                >
+                  <span>Browse shop</span>
+                  <ArrowRight size={15} />
+                </Link>
+                {wishlistCount > 0 && (
+                  <Link
+                    href="/wishlist"
+                    className="button"
+                    style={{ background: '#fff' }}
+                    onClick={() => onClose?.()}
+                  >
+                    <Heart size={14} color="#b42318" fill="#b42318" />
+                    <span>View saved ({wishlistCount})</span>
+                  </Link>
+                )}
+              </div>
             </div>
           ) : (
             <div className="bag-list">
@@ -133,14 +164,25 @@ export function BagPanel({ onClose }: { onClose?: () => void }) {
                   </div>
                   <div className="bag-item-right">
                     <strong>{formatGHS(item.pricePesewas * quantity)}</strong>
-                    <button
-                      type="button"
-                      className="bag-remove-btn"
-                      aria-label={`Remove ${item.name} from bag`}
-                      onClick={() => removeLine(item.id, item.variant)}
-                    >
-                      Remove
-                    </button>
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 4 }}>
+                      <button
+                        type="button"
+                        className="bag-remove-btn"
+                        style={{ color: 'var(--green)' }}
+                        aria-label={`Save ${item.name} for later`}
+                        onClick={() => void handleSaveForLater(item)}
+                      >
+                        Save for later
+                      </button>
+                      <button
+                        type="button"
+                        className="bag-remove-btn"
+                        aria-label={`Remove ${item.name} from bag`}
+                        onClick={() => removeLine(item.id, item.variant)}
+                      >
+                        Remove
+                      </button>
+                    </div>
                   </div>
                 </article>
               ))}

@@ -708,6 +708,36 @@ export default function StaffReceivingPage() {
                   >
                     {item.persisted ? 'Update' : 'Record'}
                   </Button>
+                  {item.persisted && !item.variantId && !item.id.startsWith('manifest-') && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      style={{ minHeight: 32, padding: '0 8px', fontSize: 11.5 }}
+                      disabled={Boolean(savingLineId)}
+                      onClick={async () => {
+                        setSavingLineId(item.id);
+                        try {
+                          await receivingApi.createProductDraftFromLine(item.id, {
+                            condition: item.inspection === 'DAMAGED' ? 'FAIR' : 'GOOD',
+                          });
+                          showToast(
+                            `Created linked Product Draft & onboarding stock lot for "${item.product}"`,
+                            'success',
+                          );
+                          await loadData(true);
+                        } catch (err) {
+                          showToast(
+                            err instanceof Error ? err.message : 'Unable to create product draft',
+                            'error',
+                          );
+                        } finally {
+                          setSavingLineId(null);
+                        }
+                      }}
+                    >
+                      + Catalog Draft
+                    </Button>
+                  )}
                 </div>
               </div>
             );

@@ -104,11 +104,29 @@ model StaffGroupAssignment {
 // 2. SHIPMENTS
 // ============================================================================
 
+model Supplier {
+  id          String     @id @default(cuid())
+  name        String     @unique
+  country     String     @default("USA")
+  contactName String?
+  phone       String?
+  email       String?
+  currency    String     @default("USD")
+  notes       String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  shipments   Shipment[]
+}
+
 model Shipment {
   id                String                  @id @default(cuid())
   reference         String                  @unique
+  supplierId        String?
+  poReference       String?
   providerName      String
   providerContact   String?
+  currency          String                  @default("USD")
+  fxRateToGhs       Float                   @default(1)
   status            String                  @default("PLANNED") // PLANNED, IN_TRANSIT, ARRIVED, RECEIVING, RECONCILIATION_PENDING, CLOSED
   departureDate     DateTime?
   estimatedArrival  DateTime?
@@ -117,6 +135,7 @@ model Shipment {
   notes             String?
   createdAt         DateTime                @default(now())
   updatedAt         DateTime                @updatedAt
+  supplier          Supplier?               @relation(fields: [supplierId], references: [id])
   manifestRevisions ManifestRevision[]
   trackingEvents    ShipmentTrackingEvent[]
   receivingSessions ReceivingSession[]
@@ -144,6 +163,7 @@ model ManifestItem {
   productName   String
   quantity      Int
   unitCostCents Int
+  cbm           Float            @default(0) // Cubic meters per unit for volume-based freight allocation
   notes         String?
   revision      ManifestRevision @relation(fields: [revisionId], references: [id])
   variant       ProductVariant?  @relation(fields: [variantId], references: [id])
@@ -253,6 +273,7 @@ model Product {
   condition         String                     @default("GOOD") // NEW, GOOD, FAIR, POOR, DEFECTIVE
   disposition       String                     @default("NORMAL_SALE") // NORMAL_SALE, DISCOUNTED_SALE, HELD_FOR_REVIEW, NOT_FOR_SALE
   defectDisclosures String?
+  boxCount          Int                        @default(1) // Multi-box set tracking (e.g. Box 1 of 4)
   shipmentId        String?
   isPublished       Boolean                    @default(false)
   unpublishReason   String?
@@ -285,7 +306,6 @@ model ProductVariant {
   sku          String                    @unique
   name         String?
   priceCents   Int
-  isPublished  Boolean                   @default(false)
   createdAt    DateTime                  @default(now())
   updatedAt    DateTime                  @updatedAt
   product      Product                   @relation(fields: [productId], references: [id])
@@ -352,38 +372,46 @@ model PricingApproval {
 // All stock mutations MUST go through InventoryService.
 
 model StockLot {
-  id            String              @id @default(cuid())
-  variantId     String
-  receiptLineId String?
-  quantity      Int
-  available     Int
-  held          Int                 @default(0)
-  unavailable   Int                 @default(0)
-  condition     String              @default("GOOD")
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
-  variant       ProductVariant      @relation(fields: [variantId], references: [id])
-  receiptLine   ReceiptLine?        @relation(fields: [receiptLineId], references: [id])
-  movements     InventoryMovement[]
-  holdLines     StockHoldLine[]
-  trackedUnits  TrackedUnit[]
+  id                  String              @id @default(cuid())
+  variantId           String
+  receiptLineId       String?
+  quantity            Int
+  available           Int
+  held                Int                 @default(0)
+  unavailable         Int                 @default(0)
+  condition           String              @default("GOOD")
+  binLocation         String?             // Warehouse bin address (e.g. A1-R02-B04)
+  abcClass            String              @default("B") // A (fast/high-value), B, C (slow)
+  landedUnitCostCents Int                 @default(0) // Frozen landed cost per unit in GHS pesewas for COGS
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  variant             ProductVariant      @relation(fields: [variantId], references: [id])
+  receiptLine         ReceiptLine?        @relation(fields: [receiptLineId], references: [id])
+  movements           InventoryMovement[]
+  holdLines           StockHoldLine[]
+  trackedUnits        TrackedUnit[]
 
   @@index([variantId])
 }
 
 model TrackedUnit {
-  id          String    @id @default(cuid())
-  variantId   String
-  lotId       String?
-  unitCode    String    @unique
-  status      String    @default("UNAVAILABLE") // UNAVAILABLE, AVAILABLE, HELD, SOLD, DISPOSED
-  condition   String    @default("GOOD")
-  defectNotes String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  lot         StockLot? @relation(fields: [lotId], references: [id])
+  id              String          @id @default(cuid())
+  variantId       String
+  lotId           String?
+  orderLineId     String?         // Binds serial number to sold OrderLine for warranty tracking
+  unitCode        String          @unique
+  status          String          @default("UNAVAILABLE") // UNAVAILABLE, AVAILABLE, HELD, SOLD, DISPOSED
+  condition       String          @default("GOOD")
+  defectNotes     String?
+  warrantyMonths  Int             @default(12)
+  warrantyExpiresAt DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  lot             StockLot?       @relation(fields: [lotId], references: [id])
+  serviceTickets  ServiceTicket[]
 
   @@index([variantId])
+  @@index([orderLineId])
 }
 
 model InventoryMovement {
@@ -402,10 +430,11 @@ model InventoryMovement {
 
 model StockHold {
   id            String          @id @default(cuid())
+  holdType      String          @default("HARD") // SOFT (unpaid quote/reservation), HARD (deposit/order committed)
   reason        String
   referenceType String
   referenceId   String
-  status        String          @default("ACTIVE") // ACTIVE, RELEASED, EXPIRED
+  status        String          @default("ACTIVE") // ACTIVE, RELEASED, EXPIRED, CONSUMED
   createdAt     DateTime        @default(now())
   expiresAt     DateTime?
   releasedAt    DateTime?
@@ -433,6 +462,8 @@ model Stocktake {
   id          String          @id @default(cuid())
   reference   String          @unique
   status      String          @default("OPEN") // OPEN, SUBMITTED, CLOSED
+  isBlind     Boolean         @default(true) // Hides systemQty during counting to prevent confirmation bias
+  abcFilter   String?         // ALL, A, B, C cycle count scope
   startedAt   DateTime        @default(now())
   closedAt    DateTime?
   submittedBy String?
@@ -524,7 +555,6 @@ model ShipmentSourcingItem {
   quantity            Int
   status              String        @default("PENDING") // PENDING, CONFIRMED, RECEIVED, CANCELLED
   providerRef         String?
-  confirmedAt         DateTime?
   providerConfirmedAt DateTime?
   shipment            Shipment      @relation(fields: [shipmentId], references: [id])
   group               RequestGroup? @relation(fields: [groupId], references: [id])
@@ -633,6 +663,7 @@ model SalesOrder {
   lines                       OrderLine[]
   payments                    Payment[]
   returns                     ReturnRequest[]
+  taxInvoices                 TaxInvoice[]
 
   @@index([customerId])
   @@index([orderStatus, fulfilmentStatus])
@@ -726,6 +757,12 @@ model CollectionRecord {
   id                         String           @id @default(cuid())
   orderId                    String?
   collectedBy                String?
+  fulfilmentMode             String           @default("SELF_COLLECTION") // SELF_COLLECTION, CUSTOMER_COURIER, WAREHOUSE_DISPATCH
+  deliveryAddress            String?
+  vehiclePlate               String?
+  deliveredAt                DateTime?
+  podPhotoUrl                String?          // Proof of Delivery photo / signed slip
+  podSignedBy                String?          // Recipient sign-off name
   representativeName         String?
   representativePhone        String?
   representativeOtpVerified  Boolean          @default(false)
@@ -950,4 +987,121 @@ model StaffReport {
 
   @@index([status])
   @@index([createdAt])
+}
+
+
+// ============================================================================
+// 13. TAX INVOICING (GRA E-VAT) & GAP-FREE DOCUMENT NUMBERING
+// ============================================================================
+
+// Atomic counters. Invoice and credit-note series must be consecutive with no gaps.
+model DocumentSequence {
+  key       String   @id
+  value     Int      @default(0)
+  updatedAt DateTime @updatedAt
+}
+
+model TaxInvoice {
+  id                String     @id @default(cuid())
+  invoiceNumber     String     @unique
+  documentType      String     @default("INVOICE") // INVOICE, CREDIT_NOTE
+  orderId           String
+  originalInvoiceId String?
+  customerName      String?
+  customerPhone     String?
+  customerTin       String?
+  netCents          Int
+  nhilCents         Int
+  getFundCents      Int
+  vatCents          Int
+  totalCents        Int
+  rateSnapshot      Json?
+  lines             Json
+  reason            String?
+  status            String     @default("PENDING") // PENDING, CLEARED, SANDBOX, FAILED
+  isSandbox         Boolean    @default(false)
+  evatReference     String?
+  evatQrCode        String?
+  evatSignature     String?
+  evatClearedAt     DateTime?
+  evatAttempts      Int        @default(0)
+  evatLastError     String?
+  issuedAt          DateTime   @default(now())
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+  order             SalesOrder @relation(fields: [orderId], references: [id])
+
+  @@index([orderId])
+  @@index([status])
+  @@index([issuedAt])
+}
+
+
+// ============================================================================
+// 14. QUOTATIONS, AFTER-SALES SERVICE TICKETS & CASHIER TILL SHIFTS
+// ============================================================================
+
+model Quotation {
+  id                   String    @id @default(cuid())
+  reference            String    @unique
+  customerId           String?
+  customerName         String
+  customerPhone        String?
+  items                Json      // Array<{ variantId, productName, sku, quantity, unitPriceCents }>
+  totalCents           Int
+  depositRequiredCents Int
+  validUntil           DateTime
+  status               String    @default("SENT") // DRAFT, SENT, CONVERTED, EXPIRED, CANCELLED
+  convertedOrderId     String?
+  createdBy            String
+  notes                String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@index([status, validUntil])
+}
+
+model ServiceTicket {
+  id              String       @id @default(cuid())
+  reference       String       @unique
+  orderId         String
+  trackedUnitId   String?
+  customerId      String?
+  issueType       String       @default("WARRANTY_CLAIM") // WARRANTY_CLAIM, REPAIR, MISSING_PART, INSTALLATION
+  description     String
+  photoUrl        String?
+  status          String       @default("OPEN") // OPEN, IN_PROGRESS, RESOLVED, CLOSED
+  assignedTo      String?
+  resolutionNotes String?
+  resolvedAt      DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  trackedUnit     TrackedUnit? @relation(fields: [trackedUnitId], references: [id])
+
+  @@index([orderId])
+  @@index([status])
+}
+
+model CashierShift {
+  id                   String    @id @default(cuid())
+  reference            String    @unique
+  staffId              String
+  status               String    @default("OPEN") // OPEN, CLOSED
+  openedAt             DateTime  @default(now())
+  closedAt             DateTime?
+  openingFloatCents    Int       @default(0)
+  countedCashCents     Int?      // Entered blind by cashier at shift close
+  expectedCashCents    Int?
+  cashVarianceCents    Int?
+  expectedMomoCents    Int?
+  reconciledMomoCents  Int?
+  expectedPaystackCents Int?
+  expectedBankCents    Int?
+  reconciledBankCents  Int?
+  notes                String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@index([staffId, status])
+  @@index([openedAt])
 }

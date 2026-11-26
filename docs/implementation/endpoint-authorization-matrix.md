@@ -7,8 +7,13 @@
 | `POST /api/auth/staff-login` | No | Staff / Owner | Email + Password + MFA (if enabled) | Rejects missing/invalid credentials (`401`) |
 | `POST /api/auth/staff-mfa/*`, `staff-change-password`, `GET /api/auth/me` | Yes | Authenticated User | `AuthGuard` | Staff-only for MFA/password change |
 | `GET /api/catalogue/products`, `:id` | No | Public | — | Published products only |
+| `GET /api/catalogue/admin/products` | Yes | Staff / Owner | `catalogue.view` | Returns `completedStageCount` & `preparationStatus`; reconciles unpublished stock to `unavailable` |
 | `POST/PATCH /api/catalogue/products*` | Yes | Staff / Owner | `catalogue.manage` | `403` for customers/unauthorized staff |
-| `POST /api/catalogue/products/:id/publish`, `unpublish` | Yes | Manager / Owner | `catalogue.publish` | Enforces publication gates |
+| `POST/PATCH/DELETE /api/catalogue/products/:id/media*` | Yes | Staff / Owner | `catalogue.manage` | Batch photo upload, atomic gallery reorder (`position: 0` = product face), and media removal |
+| `POST /api/catalogue/products/:id/preparation`, `/revert` | Yes | Staff / Owner | `catalogue.manage` | 6-stage preparation completion, independent completed-stage updates, step undo, and full reset |
+| `POST /api/catalogue/products/:id/publish`, `unpublish` | Yes | Manager / Owner | `catalogue.publish` | Enforces 6-stage preparation gates; transitions stock between `unavailable` and `available` |
+| `GET/POST/DELETE /api/catalogue/wishlist*` | Yes | Authenticated Customer | `AuthGuard` | Customer wishlist fetch, add, remove, and guest-to-account batch merge (`/wishlist/merge`) |
+| `GET/POST/PATCH /api/governance/staff-reports*` | Yes | Staff / Owner | `AuthGuard` / `staff.manage` | Staff workplace & profile-change reports (supports anonymous submissions) |
 | `GET/POST /api/shipments*` | Yes | Staff / Owner | `shipments.view` / `shipments.manage` | `403` without permission |
 | `GET/POST /api/receiving*` | Yes | Staff / Owner | `receiving.view` / `receiving.manage` | `403` without permission |
 | `GET/POST/DELETE /api/inventory*` | Yes | Staff / Owner | `inventory.view` / `inventory.adjust` | `403` without permission |
@@ -34,3 +39,13 @@
 | `GET /api/audit` | Yes | Authorised Staff / Owner | `audit.view` | Append-only |
 | `GET /api/customers*` | Yes | Staff / Owner | `customers.view` | `403` for customers |
 | `GET /api/notifications/my`, `PATCH :id/read` | Yes | Authenticated User | `AuthGuard` | Scoped to `user.id` |
+
+
+### Unified Operational Workflow & Predictive Intelligence Additions
+
+| Module | Method | Path | Access Level | Permission / Guard | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| Sourcing | `GET` | `/api/sourcing/recommendations` | Staff | `sourcing.view` (or `shipments.view`) | Multi-signal predictive shipment restock & floor-aging markdown engine |
+| Reservations | `POST` | `/api/reservations/:id/convert` | Customer / Staff | `JwtAuthGuard` (Owner customer or `reservations.manage`) | Converts reservation to `SalesOrder` & transfers active `StockHold` atomically |
+| Allocations | `POST` | `/api/allocations/:id/respond` | Customer / Staff | `JwtAuthGuard` | Accepting an offer creates an `APPROVED` 48h `Reservation` and transfers the `StockHold` |
+| Collections | `GET` / `POST` | `/api/collections` / `/api/collections/record` | Staff | `collections.view` / `collections.manage` | Returns deterministic `gatePassCode` (`AH-GP-YYYY-XXXXXX`) and representative OTP verification state |

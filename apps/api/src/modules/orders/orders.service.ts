@@ -1,9 +1,11 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { nextDocumentNumber } from '../../common/utils/document-number';
 import { PaginationDto, paginationParams } from '../../common/utils/pagination';
 import { PrismaService } from '../../database/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { TaxService } from '../tax/tax.service';
 import { WalkInOrderDto } from './dto/walk-in-order.dto';
 
 @Injectable()
@@ -16,6 +18,7 @@ export class OrdersService {
     private readonly inventory: InventoryService,
     private readonly audit: AuditService,
     private readonly notifications: NotificationsService,
+    private readonly tax: TaxService,
   ) {}
 
   private invalidateListCache() {
@@ -167,8 +170,11 @@ export class OrdersService {
     const expiresAt = new Date(Date.now() + holdMinutes * 60 * 1000);
 
     const { order, session } = await this.prisma.$transaction(async (tx) => {
+      const year = new Date().getFullYear();
+      const reference = await nextDocumentNumber(tx, `ORD_${year}`, `AH-ORD-${year}`);
       const createdOrder = await tx.salesOrder.create({
         data: {
+          reference,
           customerId: profile.id,
           source: 'ONLINE',
           status: 'PLACED',
@@ -238,13 +244,25 @@ export class OrdersService {
       customerProfileId = profile.id;
     }
 
+    const walkInHoldSetting = await this.prisma.systemSetting.findUnique({
+      where: { key: 'WALK_IN_UNPAID_HOLD_HOURS' },
+    });
+    const walkInHoldHours =
+      walkInHoldSetting && Number(walkInHoldSetting.value) > 0
+        ? Number(walkInHoldSetting.value)
+        : 24;
+    const walkInExpiresAt = new Date(Date.now() + walkInHoldHours * 60 * 60 * 1000);
+
     const totalCents = dto.lines.reduce(
       (sum, line) => sum + line.quantity * line.unitPriceCents,
       0,
     );
     const order = await this.prisma.$transaction(async (tx) => {
+      const year = new Date().getFullYear();
+      const reference = await nextDocumentNumber(tx, `ORD_${year}`, `AH-ORD-${year}`);
       const created = await tx.salesOrder.create({
         data: {
+          reference,
           customerId: customerProfileId,
           source: 'WALK_IN',
           status: 'CONFIRMED',
@@ -257,8 +275,9 @@ export class OrdersService {
         },
         include: { lines: true },
       });
+      let lastHoldId: string | undefined;
       for (const line of created.lines) {
-        await this.inventory.commitStock(
+        const hold = await this.inventory.commitStock(
           {
             variantId: line.variantId,
             quantity: line.quantity,
@@ -269,7 +288,18 @@ export class OrdersService {
           staffId,
           tx,
         );
+        lastHoldId = hold.id;
       }
+      // Time-bound hold so unpaid walk-in orders expire if no deposit is verified in time
+      await tx.checkoutSession.create({
+        data: {
+          customerId: customerProfileId,
+          orderId: created.id,
+          holdId: lastHoldId,
+          status: 'ACTIVE',
+          expiresAt: walkInExpiresAt,
+        },
+      });
       return created;
     });
     await this.audit.record({
@@ -283,13 +313,47 @@ export class OrdersService {
     return order;
   }
 
-  async cancelOrder(id: string, staffId: string, reason: string) {
-    const existing = await this.prisma.salesOrder.findUnique({ where: { id } });
+  async cancelOrder(
+    id: string,
+    staffId: string,
+    reason: string,
+    opts?: { refundMethod?: 'ORIGINAL' | 'STORE_CREDIT'; restockingFeeBps?: number },
+  ) {
+    const existing = await this.prisma.salesOrder.findUnique({
+      where: { id },
+      include: { payments: true },
+    });
     if (!existing) throw new NotFoundException(`Order ${id} not found`);
+    if (existing.orderStatus === 'CANCELLED') {
+      throw new BadRequestException('Order is already cancelled');
+    }
+    if (['PARTIALLY_COLLECTED', 'COLLECTED'].includes(existing.fulfilmentStatus)) {
+      throw new BadRequestException(
+        'Collected orders cannot be cancelled; submit a return request instead',
+      );
+    }
+
+    // Atomically claim the cancellation transition so two concurrent cancel requests
+    // can never double-release holds, double-refund, or issue duplicate credit notes.
+    const claimed = await this.prisma.salesOrder.updateMany({
+      where: {
+        id,
+        orderStatus: { not: 'CANCELLED' },
+        fulfilmentStatus: { notIn: ['PARTIALLY_COLLECTED', 'COLLECTED'] },
+      },
+      data: {
+        status: 'CANCELLED',
+        orderStatus: 'CANCELLED',
+        notes: reason,
+      },
+    });
+    if (claimed.count === 0) {
+      throw new BadRequestException('Order is already cancelled or collected');
+    }
 
     const holds = await this.prisma.stockHold.findMany({
       where: {
-        referenceType: { in: ['ORDER', 'CHECKOUT_ORDER'] },
+        referenceType: { in: ['ORDER', 'CHECKOUT_ORDER', 'SALES_ORDER'] },
         referenceId: id,
         status: 'ACTIVE',
       },
@@ -298,26 +362,99 @@ export class OrdersService {
       await this.inventory.releaseHold(hold.id, staffId);
     }
 
+    await this.prisma.checkoutSession.updateMany({
+      where: { orderId: id, status: 'ACTIVE' },
+      data: { status: 'CANCELLED' },
+    });
+
+    const verifiedPayments = existing.payments.filter((p) => p.status === 'VERIFIED');
+    const verifiedTotalCents = verifiedPayments.reduce((s, p) => s + p.amountCents, 0);
+    const feeBps = Math.max(0, Math.min(5000, Math.round(opts?.restockingFeeBps ?? 0)));
+    const restockingFeeCents = Math.round((verifiedTotalCents * feeBps) / 10_000);
+    const refundableCents = Math.max(0, verifiedTotalCents - restockingFeeCents);
+
+    let settlementSummary: {
+      verifiedTotalCents: number;
+      restockingFeeCents: number;
+      refundableCents: number;
+      mode: 'NONE' | 'STORE_CREDIT' | 'REFUND_QUEUED';
+    } = {
+      verifiedTotalCents,
+      restockingFeeCents,
+      refundableCents,
+      mode: 'NONE',
+    };
+
+    if (refundableCents > 0) {
+      if (opts?.refundMethod === 'STORE_CREDIT' && existing.customerId) {
+        await this.prisma.storeCreditEntry.create({
+          data: {
+            customerId: existing.customerId,
+            amountCents: refundableCents,
+            remainingCents: refundableCents,
+            status: 'ACTIVE',
+            issuedBy: staffId,
+            notes: `Cancelled order ${existing.reference}: ${reason}`,
+          },
+        });
+        settlementSummary.mode = 'STORE_CREDIT';
+      } else {
+        // Queue approved refund(s) against verified payment(s) so finance processes via original channel
+        let left = refundableCents;
+        for (const p of verifiedPayments) {
+          if (left <= 0) break;
+          const chunk = Math.min(p.amountCents, left);
+          await this.prisma.refund.create({
+            data: {
+              paymentId: p.id,
+              amountCents: chunk,
+              reason: `Order ${existing.reference} cancelled: ${reason}`,
+              status: 'APPROVED',
+            },
+          });
+          left -= chunk;
+        }
+        settlementSummary.mode = 'REFUND_QUEUED';
+      }
+
+      // Issue a GRA E-VAT credit note if a tax invoice had already been issued for this order
+      await this.tax
+        .issueCreditNote(id, refundableCents, `Order cancelled: ${reason}`, staffId)
+        .catch(() => null);
+    }
+
     const updated = await this.prisma.salesOrder.update({
       where: { id },
-      data: { status: 'CANCELLED', orderStatus: 'CANCELLED', notes: reason },
+      data: {
+        status: 'CANCELLED',
+        orderStatus: 'CANCELLED',
+        ...(refundableCents > 0
+          ? {
+              paymentStatus:
+                refundableCents >= verifiedTotalCents ? 'REFUNDED' : 'PARTIALLY_REFUNDED',
+            }
+          : {}),
+        notes: reason,
+      },
     });
     await this.audit.record({
       actorId: staffId,
       action: 'ORDER_CANCELLED',
       entityType: 'SalesOrder',
       entityId: id,
-      before: { orderStatus: existing.orderStatus },
-      after: { orderStatus: 'CANCELLED', reason },
+      before: { orderStatus: existing.orderStatus, paymentStatus: existing.paymentStatus },
+      after: { orderStatus: 'CANCELLED', reason, settlement: settlementSummary },
     });
     await this.notifications.notifyCustomerByProfileId(
       existing.customerId,
       'Order cancelled',
-      `Your order ${existing.reference ?? existing.id} has been cancelled (${reason}).`,
+      refundableCents > 0
+        ? `Your order ${existing.reference} has been cancelled (${reason}). Refund of GHS ${(refundableCents / 100).toLocaleString()} has been initiated${settlementSummary.mode === 'STORE_CREDIT' ? ' as store credit' : ''}.`
+        : `Your order ${existing.reference} has been cancelled (${reason}).`,
       'ORDERS',
     );
 
     this.invalidateListCache();
-    return updated;
+    return { ...updated, settlement: settlementSummary };
   }
 }

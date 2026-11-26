@@ -268,9 +268,33 @@ export class GovernanceService {
     };
   }
 
+  async getShipmentProviders() {
+    const row = await this.prisma.systemSetting.findUnique({
+      where: { key: 'SHIPMENT_PROVIDERS' },
+    });
+    const parsed = (row?.value ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    return {
+      providers:
+        parsed.length > 0
+          ? parsed
+          : ['Maersk Line', 'MSC Cargo', 'CMA CGM', 'DHL Ocean Freight'],
+    };
+  }
+
   // --- System Settings (Configurable Rules) ---
   listSettings() {
-    return this.prisma.systemSetting.findMany({ orderBy: { key: 'asc' } });
+    return this.prisma.systemSetting.findMany({
+      where: {
+        AND: [
+          { NOT: { key: { startsWith: 'WISHLIST:' } } },
+          { NOT: { key: { startsWith: 'COLLECTION_PIN:' } } },
+        ],
+      },
+      orderBy: { key: 'asc' },
+    });
   }
 
   async updateSetting(key: string, value: string, ownerId: string) {

@@ -83,6 +83,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const clearAuth = useCallback(() => {
+    void authApi.logout().catch(() => null);
     if (isStaff) {
       clearStaffAuth();
     } else {

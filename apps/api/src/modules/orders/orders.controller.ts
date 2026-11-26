@@ -55,6 +55,9 @@ export class OrdersController {
     @Body() dto: CancelOrderDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.orders.cancelOrder(id, user.id, dto.reason || 'Staff cancellation');
+    return this.orders.cancelOrder(id, user.id, dto.reason || 'Staff cancellation', {
+      refundMethod: dto.refundMethod,
+      restockingFeeBps: dto.restockingFeeBps,
+    });
   }
 }

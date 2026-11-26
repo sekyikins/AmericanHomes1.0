@@ -4,6 +4,7 @@ import { QueryProvider } from '@/providers/query-provider';
 import { ToastProvider } from '@/providers/toast.provider';
 import { AuthProvider } from '@/store/auth.store';
 import { CartProvider } from '@/store/cart.store';
+import { WishlistProvider } from '@/store/wishlist.store';
 
 export const metadata: Metadata = {
   title: 'AmericanHomes | Imported quality. Local confidence.',
@@ -17,7 +18,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <ToastProvider>
           <AuthProvider>
             <CartProvider>
-              <QueryProvider>{children}</QueryProvider>
+              <WishlistProvider>
+                <QueryProvider>{children}</QueryProvider>
+              </WishlistProvider>
             </CartProvider>
           </AuthProvider>
         </ToastProvider>

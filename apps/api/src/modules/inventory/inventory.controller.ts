@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth } from '@nestjs/swagger';
 import { PERMISSIONS } from '../../common/constants/permissions';
+import { AuthenticatedUser, CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/permissions.decorator';
 import { AuthGuard } from '../../common/guards/auth.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
@@ -35,6 +36,15 @@ export class InventoryController {
   @RequirePermission(PERMISSIONS.INVENTORY.ADJUST_STOCK)
   commit(@Body() dto: CommitStockDto) {
     return this.inventory.commitStock(dto);
+  }
+
+  @Post('release-unavailable')
+  @RequirePermission(PERMISSIONS.INVENTORY.ADJUST_STOCK)
+  releaseUnavailable(
+    @Body() dto: { variantId: string; quantity: number },
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.inventory.moveUnavailableToAvailable(dto.variantId, Number(dto.quantity), user.id);
   }
 
   @Delete('holds/:id')

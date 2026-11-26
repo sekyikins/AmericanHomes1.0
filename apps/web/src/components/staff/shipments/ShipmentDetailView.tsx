@@ -6,6 +6,10 @@ import { ArrowLeft, ArrowRight, Ship } from 'lucide-react';
 import Link from 'next/link';
 import type { FormEvent } from 'react';
 import { ShipmentManifestTab, type ManifestDraftRow } from './ShipmentManifestTab';
+import type {
+  ApprovedRequestSuggestion,
+  DemandRestockSuggestion,
+} from './CreateShipmentView';
 import { ShipmentOperationsTabs } from './ShipmentOperationsTabs';
 import { statusTone, type DetailTab, type ShipmentRecord } from './shipmentMapper';
 
@@ -27,6 +31,8 @@ type ShipmentDetailViewProps = {
   setManifestRevisionNote: (v: string) => void;
   savingManifest: boolean;
   variantOptions: ProductVariantOption[];
+  approvedRequests?: ApprovedRequestSuggestion[];
+  demandRecommendations?: DemandRestockSuggestion[];
   showTrackingForm: boolean;
   setShowTrackingForm: React.Dispatch<React.SetStateAction<boolean>>;
   newMilestone: string;
@@ -77,6 +83,8 @@ export function ShipmentDetailView({
   setManifestRevisionNote,
   savingManifest,
   variantOptions,
+  approvedRequests = [],
+  demandRecommendations = [],
   showTrackingForm,
   setShowTrackingForm,
   newMilestone,
@@ -293,6 +301,8 @@ export function ShipmentDetailView({
           setManifestRevisionNote={setManifestRevisionNote}
           savingManifest={savingManifest}
           variantOptions={variantOptions}
+          approvedRequests={approvedRequests}
+          demandRecommendations={demandRecommendations}
           onOpenManifestEditor={onOpenManifestEditor}
           onSaveManifestRevision={onSaveManifestRevision}
         />

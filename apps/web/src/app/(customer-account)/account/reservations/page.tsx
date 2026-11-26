@@ -74,14 +74,17 @@ export default function ReservationsPage() {
     if (!payReservation || submitting) return;
     setSubmitting(true);
     try {
-      const { order } = await ordersApi.checkout({
-        items: [{ variantId: payReservation.variantId, quantity: payReservation.quantity }],
-        disclosedDefectsAcknowledged: true,
-        notes: `Reservation ${payReservation.reference}`,
-      });
+      const converted = (await reservationsApi.convertToOrder(
+        payReservation.id,
+        `Converted from reservation ${payReservation.reference}`,
+      )) as { order: { id: string; reference?: string; totalCents?: number } };
+      const order = converted.order;
+      const amountCents =
+        order.totalCents ??
+        payReservation.pricePesewas * Math.max(1, payReservation.quantity);
       const res = await paymentsApi.initialize({
         orderId: order.id,
-        amountCents: order.totalCents,
+        amountCents,
         channel: payChannel,
       });
       if (res.authorizationUrl && res.authorizationUrl !== 'stub') {
@@ -89,7 +92,7 @@ export default function ReservationsPage() {
         return;
       }
       showToast(
-        `Order ${order.reference || payReservation.reference} created. Check My Orders for collection status.`,
+        `Reservation ${payReservation.reference} converted to order. Check My Orders for collection status.`,
         'success',
       );
       setPayReservation(null);
