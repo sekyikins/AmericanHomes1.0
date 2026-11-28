@@ -719,6 +719,8 @@ export const governanceApi = {
   votePoll: (id: string, choice = 'YES') =>
     api.post<unknown>(`/governance/polls/${id}/vote`, { choice }),
   listSettings: () => api.get<Record<string, unknown>[]>('/governance/settings'),
+  getProductCollections: () =>
+    api.get<{ collections: string[] }>('/governance/product-collections'),
   getShipmentProviders: () =>
     api.get<{ providers: string[] }>('/governance/shipment-providers'),
   getPaymentAccounts: () =>

@@ -161,6 +161,7 @@ model ManifestItem {
   revisionId    String
   variantId     String?
   productName   String
+  category      String?
   quantity      Int
   unitCostCents Int
   cbm           Float            @default(0) // Cubic meters per unit for volume-based freight allocation

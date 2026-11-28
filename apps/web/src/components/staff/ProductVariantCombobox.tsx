@@ -8,6 +8,7 @@ export type ProductVariantOption = {
   productName: string;
   variantName: string;
   sku: string;
+  category?: string;
 };
 
 type Props = {
@@ -19,6 +20,7 @@ type Props = {
     productName: string;
     variantId?: string;
     variantLabel?: string;
+    category?: string;
   }) => void;
 };
 
@@ -130,6 +132,7 @@ export function ProductVariantCombobox({
                       productName: displayName,
                       variantId: opt.variantId,
                       variantLabel: opt.variantName || opt.sku,
+                      category: opt.category,
                     });
                     setOpen(false);
                   }}

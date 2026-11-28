@@ -549,7 +549,7 @@ export default function StaffReceivingPage() {
         />
       </div>
 
-      <section className="acct-panel" style={{ padding: 0 }}>
+      <section className="acct-panel" style={{ padding: 0, overflowX: 'auto' }}>
         <div className="staff-table-head staff-rec-cols">
           <SortableHeader label="ITEM" sortKey="product" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
           <SortableHeader label="EXPECTED" sortKey="expected" sort={sort} onSort={(k) => setSort((s) => cycleSort(s, k))} />
@@ -675,7 +675,7 @@ export default function StaffReceivingPage() {
                   </select>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                   <button
                     type="button"
                     className="rec-icon-btn"
@@ -700,7 +700,7 @@ export default function StaffReceivingPage() {
                   </button>
                   <Button
                     type="button"
-                    style={{ minHeight: 32, padding: '0 10px', fontSize: 12 }}
+                    style={{ minHeight: 32, padding: '0 10px', fontSize: 12, whiteSpace: 'nowrap' }}
                     loading={savingLineId === item.id}
                     loadingText="Saving…"
                     disabled={activeSession.status !== 'OPEN' || savingDraft || Boolean(savingLineId)}
@@ -712,7 +712,7 @@ export default function StaffReceivingPage() {
                     <Button
                       type="button"
                       variant="secondary"
-                      style={{ minHeight: 32, padding: '0 8px', fontSize: 11.5 }}
+                      style={{ minHeight: 32, padding: '0 10px', fontSize: 11.5, whiteSpace: 'nowrap' }}
                       disabled={Boolean(savingLineId)}
                       onClick={async () => {
                         setSavingLineId(item.id);

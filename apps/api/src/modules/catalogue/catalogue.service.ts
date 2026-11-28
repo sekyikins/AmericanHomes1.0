@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { paginationParams } from '../../common/utils/pagination';
+import { ensureProductCollectionsInSettings } from '../../common/utils/product-collections';
 import { PrismaService } from '../../database/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -373,6 +374,10 @@ export class CatalogueService {
           actorId: staffId,
         },
       });
+    }
+
+    if (created.category) {
+      void ensureProductCollectionsInSettings(this.prisma, [created.category]).catch(() => null);
     }
 
     await this.audit.record({

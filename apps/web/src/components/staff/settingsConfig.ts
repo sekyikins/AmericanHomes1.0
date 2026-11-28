@@ -35,6 +35,7 @@ export const SETTINGS_DEFAULTS: Record<string, string> = {
   support_phone: '+233 24 555 0198',
   support_email: 'support@americanhomes.gh',
   warehouse_address: 'Community 25, Tema, Greater Accra',
+  PRODUCT_COLLECTIONS: 'Living room, Office, Kitchen, Outdoors, Dining, Electronics',
   SHIPMENT_PROVIDERS: 'Atlantic Freight & Logistics, OceanBridge Cargo, Tema Express Freight',
   BASE_CURRENCY: 'GHS',
   IMPORT_FX_USD_TO_GHS: '15.50',
@@ -76,14 +77,26 @@ export const SETTINGS_DEFAULTS: Record<string, string> = {
 export const SETTINGS_SECTIONS: SettingsSection[] = [
   {
     id: 'business',
-    title: 'Business profile',
-    description: 'Business identity, support contacts and warehouse address.',
-    summary: (v) => `${v.business_name} · ${v.warehouse_address}`,
+    title: 'Business profile & collections',
+    description: 'Business identity, support contacts, warehouse address and storefront product collections.',
+    summary: (v) => {
+      const colCount = (v.PRODUCT_COLLECTIONS ?? '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean).length;
+      return `${v.business_name} · ${colCount} product collection${colCount === 1 ? '' : 's'}`;
+    },
     fields: [
       { key: 'business_name', label: 'Business name' },
       { key: 'support_phone', label: 'Support phone' },
       { key: 'support_email', label: 'Support email' },
       { key: 'warehouse_address', label: 'Warehouse address' },
+      {
+        key: 'PRODUCT_COLLECTIONS',
+        label: 'Product collections / categories',
+        type: 'list',
+        placeholder: 'Add collection (e.g. Bedroom, Appliances, Kids, Rugs)',
+      },
     ],
   },
   {

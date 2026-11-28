@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PaginationDto, paginationParams } from '../../common/utils/pagination';
+import { ensureProductCollectionsInSettings } from '../../common/utils/product-collections';
 import { PrismaService } from '../../database/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -179,6 +180,13 @@ export class ShipmentsService {
       },
       include: { items: true },
     });
+    // Auto-register any new collection names entered on the manifest
+    const newCats = dto.items
+      .map((i) => i.category?.trim())
+      .filter((c): c is string => Boolean(c));
+    if (newCats.length > 0) {
+      void ensureProductCollectionsInSettings(this.prisma, newCats).catch(() => null);
+    }
     await this.audit.record({
       actorId: staffId,
       action: 'SHIPMENT_MANIFEST_ADDED',

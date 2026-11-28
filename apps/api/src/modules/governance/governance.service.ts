@@ -284,6 +284,52 @@ export class GovernanceService {
     };
   }
 
+  async getProductCollections() {
+    const defaultCollections = [
+      'Living room',
+      'Office',
+      'Kitchen',
+      'Outdoors',
+      'Dining',
+      'Electronics',
+    ];
+    const [row, productRows] = await Promise.all([
+      this.prisma.systemSetting.findUnique({ where: { key: 'PRODUCT_COLLECTIONS' } }),
+      this.prisma.product.findMany({
+        select: { category: true },
+        distinct: ['category'],
+      }),
+    ]);
+
+    const configured = (row?.value ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const base = configured.length > 0 ? configured : defaultCollections;
+
+    const seen = new Map<string, string>();
+    const addLabel = (raw: string) => {
+      const cleaned = raw.trim().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ');
+      if (!cleaned) return;
+      const key = cleaned.toLowerCase();
+      if (!seen.has(key)) {
+        // Preserve configured casing; title-case raw slugs from DB
+        const display =
+          cleaned === cleaned.toLowerCase()
+            ? cleaned.charAt(0).toUpperCase() + cleaned.slice(1)
+            : cleaned;
+        seen.set(key, display);
+      }
+    };
+
+    for (const c of base) addLabel(c);
+    for (const p of productRows) {
+      if (p.category) addLabel(p.category);
+    }
+
+    return { collections: Array.from(seen.values()) };
+  }
+
   // --- System Settings (Configurable Rules) ---
   listSettings() {
     return this.prisma.systemSetting.findMany({

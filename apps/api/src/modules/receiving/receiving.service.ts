@@ -323,11 +323,14 @@ export class ReceivingService {
     const receivedQty = Math.max(1, line.receivedQty || line.expectedQty || 1);
     const condition = dto.condition ?? (line.condition === 'DAMAGED' ? 'FAIR' : 'GOOD');
 
+    const resolvedCategory =
+      dto.category?.trim() || line.manifestItem?.category?.trim() || 'Uncategorized';
+
     return this.prisma.$transaction(async (tx) => {
       const product = await tx.product.create({
         data: {
           name: productName,
-          category: dto.category || 'furniture',
+          category: resolvedCategory,
           brand: dto.brand || 'Imported',
           condition,
           disposition: line.condition === 'DAMAGED' ? 'DISCOUNTED_SALE' : 'NORMAL_SALE',

@@ -31,6 +31,7 @@ type ShipmentDetailViewProps = {
   setManifestRevisionNote: (v: string) => void;
   savingManifest: boolean;
   variantOptions: ProductVariantOption[];
+  collectionOptions?: string[];
   approvedRequests?: ApprovedRequestSuggestion[];
   demandRecommendations?: DemandRestockSuggestion[];
   showTrackingForm: boolean;

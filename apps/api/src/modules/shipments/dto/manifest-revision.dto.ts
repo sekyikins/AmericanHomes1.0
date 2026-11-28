@@ -13,6 +13,11 @@ export class ManifestItemDto {
   @IsString()
   productName!: string;
 
+  @ApiPropertyOptional({ description: 'Product collection / category', example: 'Kitchen' })
+  @IsOptional()
+  @IsString()
+  category?: string;
+
   @ApiProperty({ description: 'Expected quantity', example: 4 })
   @IsInt()
   quantity!: number;

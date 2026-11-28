@@ -1,5 +1,6 @@
 'use client';
 
+import { CollectionCombobox } from '@/components/staff/CollectionCombobox';
 import { StaffModal } from '@/components/staff/StaffModal';
 import { Button, SearchableSelect } from '@/components/ui';
 import { ArrowRight, Plus, RotateCcw, Tag, Wrench } from 'lucide-react';
@@ -31,6 +32,7 @@ interface ProductRecordModalProps {
   editingVariants?: ProductVariantSummary[];
   name: string;
   category: string;
+  collectionOptions?: string[];
   shipment: string;
   shipmentOptions: string[];
   initialQuantity?: string;
@@ -74,6 +76,7 @@ export function ProductRecordModal({
   editingVariants = [],
   name,
   category,
+  collectionOptions = ['Living room', 'Office', 'Kitchen', 'Outdoors', 'Dining', 'Electronics'],
   shipment,
   shipmentOptions,
   initialQuantity = '1',
@@ -318,21 +321,15 @@ export function ProductRecordModal({
             />
           </label>
 
-          <label className="login-field">
-            <span>Category</span>
-            <select
-              className="staff-field-select"
+          <div className="login-field">
+            <span>Collection / Category</span>
+            <CollectionCombobox
               value={category}
-              onChange={(e) => onCategoryChange(e.target.value)}
-            >
-              <option value="Living room">Living room</option>
-              <option value="Office">Office</option>
-              <option value="Kitchen">Kitchen</option>
-              <option value="Outdoors">Outdoors</option>
-              <option value="Dining">Dining</option>
-              <option value="Electronics">Electronics</option>
-            </select>
-          </label>
+              options={collectionOptions}
+              placeholder="Select or type collection…"
+              onChange={onCategoryChange}
+            />
+          </div>
         </div>
 
         <div className="req-row-2">

@@ -56,6 +56,14 @@ export default function StaffShipmentsPage() {
     'OceanBridge Cargo',
     'Tema Express Freight',
   ]);
+  const [collectionOptions, setCollectionOptions] = useState<string[]>([
+    'Living room',
+    'Office',
+    'Kitchen',
+    'Outdoors',
+    'Dining',
+    'Electronics',
+  ]);
   const [editingManifest, setEditingManifest] = useState(false);
   const [manifestDraftRows, setManifestDraftRows] = useState<ManifestDraftRow[]>([]);
   const [manifestRevisionNote, setManifestRevisionNote] = useState('');
@@ -90,13 +98,17 @@ export default function StaffShipmentsPage() {
     if (!silent) setLoading(true);
     setLoadError(null);
     try {
-      const [res, productsRes, providersRes, requestsRes, recRes] = await Promise.all([
+      const [res, productsRes, providersRes, collectionsRes, requestsRes, recRes] = await Promise.all([
         shipmentsApi.list(),
         catalogueApi.listAdmin().catch(() => []),
         governanceApi.getShipmentProviders().catch(() => null),
+        governanceApi.getProductCollections().catch(() => null),
         requestsApi.list().catch(() => []),
         sourcingApi.recommendations().catch(() => null),
       ]);
+      if (collectionsRes?.collections?.length) {
+        setCollectionOptions(collectionsRes.collections);
+      }
       if (recRes && Array.isArray(recRes.restockRecommendations)) {
         setDemandRecommendations(recRes.restockRecommendations);
       }
@@ -113,9 +125,16 @@ export default function StaffShipmentsPage() {
       const opts: ProductVariantOption[] = [];
       for (const p of Array.isArray(productsRes) ? productsRes : []) {
         const prodName = String((p as { name?: string }).name ?? 'Product');
+        const prodCat = String((p as { category?: string }).category ?? '').trim();
         const variants = (p as { variants?: Array<{ id: string; sku: string; name?: string | null }> }).variants ?? [];
         for (const v of variants) {
-          opts.push({ variantId: v.id, productName: prodName, variantName: v.name ?? '', sku: v.sku });
+          opts.push({
+            variantId: v.id,
+            productName: prodName,
+            variantName: v.name ?? '',
+            sku: v.sku,
+            category: prodCat || undefined,
+          });
         }
       }
       setVariantOptions(opts);
@@ -389,6 +408,7 @@ export default function StaffShipmentsPage() {
             !item.variantId && item.variant.trim()
               ? `${item.product.trim()} (${item.variant.trim()})`
               : item.product.trim(),
+          ...(item.category?.trim() ? { category: item.category.trim() } : {}),
           quantity: Math.max(1, Number(item.qty) || 1),
           unitCostCents: Math.max(0, Math.round((Number(item.unitCostGhs) || 0) * 100)),
         }));
@@ -427,6 +447,7 @@ export default function StaffShipmentsPage() {
         draftManifest={draftManifest}
         setDraftManifest={setDraftManifest}
         variantOptions={variantOptions}
+        collectionOptions={collectionOptions}
         approvedRequests={approvedRequests}
         demandRecommendations={demandRecommendations}
         onAddRow={() =>
@@ -470,6 +491,7 @@ export default function StaffShipmentsPage() {
         setManifestRevisionNote={setManifestRevisionNote}
         savingManifest={savingManifest}
         variantOptions={variantOptions}
+        collectionOptions={collectionOptions}
         approvedRequests={approvedRequests}
         demandRecommendations={demandRecommendations}
         showTrackingForm={showTrackingForm}

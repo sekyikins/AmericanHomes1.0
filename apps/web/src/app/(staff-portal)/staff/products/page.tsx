@@ -13,7 +13,7 @@ import {
   SortableHeader,
 } from '@/components/staff/TableControls';
 import { ConfirmDialog, EmptyState, ErrorState, TableSkeleton } from '@/components/ui';
-import { catalogueApi, shipmentsApi } from '@/lib/api';
+import { catalogueApi, governanceApi, shipmentsApi } from '@/lib/api';
 import {
   applyFiltersAndSort,
   cycleSort,
@@ -88,6 +88,14 @@ function StaffProductsContent() {
   const [category, setCategory] = useState('Living room');
   const [shipment, setShipment] = useState('');
   const [shipmentOptions, setShipmentOptions] = useState<string[]>([]);
+  const [collectionOptions, setCollectionOptions] = useState<string[]>([
+    'Living room',
+    'Office',
+    'Kitchen',
+    'Outdoors',
+    'Dining',
+    'Electronics',
+  ]);
   const [initialQuantity, setInitialQuantity] = useState('1');
   const [initialSize, setInitialSize] = useState('');
   const [initialColor, setInitialColor] = useState('');
@@ -255,6 +263,12 @@ function StaffProductsContent() {
           .filter(Boolean);
         setShipmentOptions(refs);
         if (refs[0]) setShipment((prev) => prev || refs[0]);
+      })
+      .catch(() => {});
+    governanceApi
+      .getProductCollections()
+      .then((res) => {
+        if (res?.collections?.length) setCollectionOptions(res.collections);
       })
       .catch(() => {});
   }, [loadProducts]);
@@ -784,6 +798,7 @@ function StaffProductsContent() {
         editingVariants={editingProduct?.variants ?? []}
         name={name}
         category={category}
+        collectionOptions={collectionOptions}
         shipment={shipment}
         shipmentOptions={shipmentOptions}
         initialQuantity={initialQuantity}

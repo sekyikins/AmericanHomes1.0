@@ -130,6 +130,11 @@ export class GovernanceController {
     return this.gov.getPaymentAccounts();
   }
 
+  @Get('product-collections')
+  getProductCollections() {
+    return this.gov.getProductCollections();
+  }
+
   @Get('shipment-providers')
   @ApiBearerAuth()
   @UseGuards(AuthGuard, PermissionsGuard)

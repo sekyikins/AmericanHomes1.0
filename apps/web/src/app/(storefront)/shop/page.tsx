@@ -5,13 +5,13 @@ import { useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
 import { ProductCard } from '@/components/storefront/ProductCard';
 import { EmptyState, ProductGridSkeleton } from '@/components/ui';
-import { catalogueApi } from '@/lib/api';
+import { catalogueApi, governanceApi } from '@/lib/api';
 import {
   mapApiProductToCatalog,
   type CatalogProduct,
 } from '@/lib/data/products';
 
-const categories = ['All', 'Living room', 'Office', 'Kitchen', 'Outdoors', 'Dining', 'Electronics'];
+const DEFAULT_CATEGORIES = ['Living room', 'Office', 'Kitchen', 'Outdoors', 'Dining', 'Electronics'];
 
 const CATEGORY_ALIASES: Record<string, string> = {
   furniture: 'Living room',
@@ -24,18 +24,23 @@ function normalizeCategory(raw: string): string {
   return raw.trim().toLowerCase().replace(/[-_]+/g, ' ');
 }
 
-function resolveCategoryParam(raw: string | null): string {
+function resolveCategoryParam(raw: string | null, availableCategories: string[]): string {
   if (!raw) return 'All';
-  const exact = categories.find((c) => c.toLowerCase() === raw.trim().toLowerCase());
+  const exact = availableCategories.find(
+    (c) => normalizeCategory(c) === normalizeCategory(raw),
+  );
   if (exact) return exact;
-  return CATEGORY_ALIASES[raw.trim().toLowerCase()] ?? 'All';
+  return CATEGORY_ALIASES[raw.trim().toLowerCase()] ?? raw.trim();
 }
 
 function ShopContent() {
   const searchParams = useSearchParams();
   const [products, setProducts] = useState<CatalogProduct[]>([]);
+  const [categories, setCategories] = useState<string[]>(['All', ...DEFAULT_CATEGORIES]);
   const [loadingProducts, setLoadingProducts] = useState(true);
-  const [category, setCategory] = useState(() => resolveCategoryParam(searchParams.get('category')));
+  const [category, setCategory] = useState(() =>
+    resolveCategoryParam(searchParams.get('category'), ['All', ...DEFAULT_CATEGORIES]),
+  );
   const [search, setSearch] = useState('');
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [priceRange, setPriceRange] = useState<'all' | 'under3000' | 'over3000'>('all');
@@ -44,12 +49,35 @@ function ShopContent() {
 
   useEffect(() => {
     let active = true;
-    catalogueApi
-      .listPublished()
-      .then((res) => {
-        if (active && Array.isArray(res)) {
-          setProducts(res.map(mapApiProductToCatalog));
+    Promise.all([
+      catalogueApi.listPublished(),
+      governanceApi.getProductCollections().catch(() => null),
+    ])
+      .then(([res, colRes]) => {
+        if (!active) return;
+        const mapped = Array.isArray(res) ? res.map(mapApiProductToCatalog) : [];
+        setProducts(mapped);
+        const merged = new Map<string, string>();
+        const addCat = (c: string) => {
+          const clean = c.trim().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ');
+          if (!clean) return;
+          const k = clean.toLowerCase();
+          if (!merged.has(k)) {
+            merged.set(
+              k,
+              clean === clean.toLowerCase()
+                ? clean.charAt(0).toUpperCase() + clean.slice(1)
+                : clean,
+            );
+          }
+        };
+        const base = colRes?.collections?.length ? colRes.collections : DEFAULT_CATEGORIES;
+        for (const c of base) addCat(c);
+        for (const p of mapped) {
+          if (p.category) addCat(p.category);
         }
+        const nextCats = ['All', ...Array.from(merged.values())];
+        setCategories(nextCats);
       })
       .catch(() => {})
       .finally(() => {
@@ -63,9 +91,9 @@ function ShopContent() {
   useEffect(() => {
     const rawCat = searchParams.get('category');
     if (rawCat !== null) {
-      setCategory(resolveCategoryParam(rawCat));
+      setCategory(resolveCategoryParam(rawCat, categories));
     }
-  }, [searchParams]);
+  }, [searchParams, categories]);
 
   useEffect(() => {
     if (!filtersOpen) return;

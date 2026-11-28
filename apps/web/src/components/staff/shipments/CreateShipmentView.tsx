@@ -1,5 +1,6 @@
 'use client';
 
+import { CollectionCombobox } from '@/components/staff/CollectionCombobox';
 import {
   ProductVariantCombobox,
   type ProductVariantOption,
@@ -13,6 +14,7 @@ export type DraftManifestRow = {
   id: string;
   variantId?: string;
   product: string;
+  category?: string;
   variant: string;
   qty: number;
   unitCostGhs?: string;
@@ -63,6 +65,7 @@ type CreateShipmentViewProps = {
   draftManifest: DraftManifestRow[];
   setDraftManifest: React.Dispatch<React.SetStateAction<DraftManifestRow[]>>;
   variantOptions: ProductVariantOption[];
+  collectionOptions?: string[];
   approvedRequests?: ApprovedRequestSuggestion[];
   demandRecommendations?: DemandRestockSuggestion[];
   onAddRow: () => void;
@@ -89,6 +92,7 @@ export function CreateShipmentView({
   draftManifest,
   setDraftManifest,
   variantOptions,
+  collectionOptions = ['Living room', 'Office', 'Kitchen', 'Outdoors', 'Dining', 'Electronics'],
   approvedRequests = [],
   demandRecommendations = [],
   onAddRow,
@@ -386,9 +390,23 @@ export function CreateShipmentView({
                               product: next.productName,
                               variantId: next.variantId,
                               variant: next.variantLabel ?? r.variant,
+                              category: next.category ?? r.category,
                             }
                           : r,
                       ),
+                    )
+                  }
+                />
+              </div>
+              <div className="login-field" style={{ margin: 0 }}>
+                <span>Collection</span>
+                <CollectionCombobox
+                  value={row.category ?? ''}
+                  options={collectionOptions}
+                  placeholder="Select or type…"
+                  onChange={(val) =>
+                    setDraftManifest((prev) =>
+                      prev.map((r) => (r.id === row.id ? { ...r, category: val } : r)),
                     )
                   }
                 />
